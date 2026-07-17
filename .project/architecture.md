@@ -140,11 +140,11 @@ flowchart LR
 
 ### 3.3 Text injection (Windows MVP)
 
-Контракт `TextInjector`, порядок fallback:
+Контракт inject по сохранённому `InputTarget` (захват на `start()`):
 
-1. Clipboard + Ctrl+V (default)
-2. UI Automation insert text
-3. SendInput key events (last resort)
+1. Restore focus (HWND + UIA RuntimeId) + UIA ValuePattern для пустых полей
+2. Focus restore + clipboard Ctrl+V (caret mid-string)
+3. SendInput unicode (last resort)
 
 Разрешения: микрофон + Accessibility/UI Automation — онбординг.
 

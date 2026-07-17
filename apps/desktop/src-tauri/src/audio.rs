@@ -9,6 +9,8 @@ use cpal::{SampleFormat, Stream, StreamConfig};
 use thiserror::Error;
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
+/// Decay applied to rolling level on each stats() poll so the waveform falls when quiet.
+const LEVEL_DECAY: f32 = 0.62;
 
 /// cpal marks Stream !Send for cross-platform; WASAPI stream is Send in practice.
 /// Kept alive so the WASAPI callback runs; dropped on stop.
@@ -37,7 +39,10 @@ pub struct CaptureStats {
     pub channels: u16,
     pub frames: usize,
     pub duration_ms: u64,
+    /// Session-max amplitude (0..1).
     pub peak_amplitude: f32,
+    /// Short-window level for live meters / waveform (0..1).
+    pub level: f32,
 }
 
 struct CaptureInner {
@@ -46,6 +51,8 @@ struct CaptureInner {
     channels: u16,
     started_at: Instant,
     peak: f32,
+    /// Rolling peak for UI; raised in the audio callback, decayed in stats().
+    rolling: f32,
 }
 
 /// Microphone capture for Windows (cpal WASAPI).
@@ -96,6 +103,7 @@ impl MicCapture {
             channels,
             started_at: Instant::now(),
             peak: 0.0,
+            rolling: 0.0,
         });
 
         let err_fn = |err| eprintln!("Voice audio stream error: {err}");
@@ -144,14 +152,13 @@ impl MicCapture {
         *self.stream.lock().expect("stream mutex") = Some(SendStream(stream));
         self.active.store(true, Ordering::SeqCst);
 
-        // Latency target: capture ready immediately after stream play.
-        let _ = TARGET_SAMPLE_RATE;
         Ok(CaptureStats {
             sample_rate,
             channels,
             frames: 0,
             duration_ms: 0,
             peak_amplitude: 0.0,
+            level: 0.0,
         })
     }
 
@@ -167,28 +174,53 @@ impl MicCapture {
 
         let mut guard = self.inner.lock().expect("audio mutex");
         let captured = guard.take().ok_or(AudioError::NotCapturing)?;
+        // Whisper expects 16 kHz — downsample here to cut WAV size and ASR work.
+        let samples = resample_mono(&captured.samples, captured.sample_rate, TARGET_SAMPLE_RATE);
         let stats = CaptureStats {
-            sample_rate: captured.sample_rate,
-            channels: captured.channels,
-            frames: captured.samples.len(),
+            sample_rate: TARGET_SAMPLE_RATE,
+            channels: 1,
+            frames: samples.len(),
             duration_ms: captured.started_at.elapsed().as_millis() as u64,
             peak_amplitude: captured.peak,
+            level: captured.rolling,
         };
-        let sample_rate = captured.sample_rate;
-        Ok((stats, captured.samples, sample_rate))
+        Ok((stats, samples, TARGET_SAMPLE_RATE))
     }
 
     pub fn stats(&self) -> Option<CaptureStats> {
-        let guard = self.inner.lock().expect("audio mutex");
-        let captured = guard.as_ref()?;
+        let mut guard = self.inner.lock().expect("audio mutex");
+        let captured = guard.as_mut()?;
+        let level = captured.rolling;
+        // Decay so quiet moments drop the waveform between polls.
+        captured.rolling *= LEVEL_DECAY;
         Some(CaptureStats {
             sample_rate: captured.sample_rate,
             channels: captured.channels,
             frames: captured.samples.len(),
             duration_ms: captured.started_at.elapsed().as_millis() as u64,
             peak_amplitude: captured.peak,
+            level,
         })
     }
+}
+
+/// Linear resample mono f32 to `to_rate` (Whisper target 16 kHz).
+fn resample_mono(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if samples.is_empty() || from_rate == 0 || from_rate == to_rate {
+        return samples.to_vec();
+    }
+    let ratio = f64::from(to_rate) / f64::from(from_rate);
+    let out_len = ((samples.len() as f64) * ratio).round().max(1.0) as usize;
+    let last = samples.len() - 1;
+    let mut out = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        let src = i as f64 / ratio;
+        let i0 = (src.floor() as usize).min(last);
+        let i1 = (i0 + 1).min(last);
+        let t = (src - i0 as f64) as f32;
+        out.push(samples[i0].mul_add(1.0 - t, samples[i1] * t));
+    }
+    out
 }
 
 fn write_frames(inner: &Mutex<Option<CaptureInner>>, data: &[f32], channels: u16) {
@@ -201,7 +233,9 @@ fn write_frames(inner: &Mutex<Option<CaptureInner>>, data: &[f32], channels: u16
 
     if channels <= 1 {
         for &sample in data {
-            state.peak = state.peak.max(sample.abs());
+            let a = sample.abs();
+            state.peak = state.peak.max(a);
+            state.rolling = state.rolling.max(a);
             state.samples.push(sample);
         }
         return;
@@ -211,7 +245,9 @@ fn write_frames(inner: &Mutex<Option<CaptureInner>>, data: &[f32], channels: u16
     for frame in data.chunks(channels as usize) {
         let sum: f32 = frame.iter().copied().sum();
         let mono = sum / channels as f32;
-        state.peak = state.peak.max(mono.abs());
+        let a = mono.abs();
+        state.peak = state.peak.max(a);
+        state.rolling = state.rolling.max(a);
         state.samples.push(mono);
     }
 }

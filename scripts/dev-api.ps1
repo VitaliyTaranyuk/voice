@@ -6,7 +6,7 @@ Set-Location "$PSScriptRoot\..\services\api"
 
 if (-not (Test-Path ".env")) {
   Copy-Item ".env.example" ".env"
-  Write-Host "Created .env — add OPENAI_API_KEY/DEEPGRAM_API_KEY and DEEPSEEK_API_KEY"
+  Write-Host "Created .env — add DEEPSEEK_API_KEY (ASR is local by default)"
 }
 
 uv sync

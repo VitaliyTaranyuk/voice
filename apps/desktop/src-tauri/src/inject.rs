@@ -1,9 +1,18 @@
+//! Multi-strategy text injection into a captured InputTarget.
+
 use std::thread;
 use std::time::Duration;
 
 use arboard::Clipboard;
-use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use thiserror::Error;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+    VIRTUAL_KEY, VK_CONTROL, VK_V,
+};
+
+use crate::input_target::{
+    prepare_target_for_inject, try_uia_insert, InputTarget, InputTargetError,
+};
 
 #[derive(Debug, Error)]
 pub enum InjectError {
@@ -11,10 +20,97 @@ pub enum InjectError {
     Clipboard(String),
     #[error("input simulation error: {0}")]
     Input(String),
+    #[error("target error: {0}")]
+    Target(#[from] InputTargetError),
+    #[error("no active text field to insert into")]
+    NoTextField,
 }
 
-/// Clipboard-first text injection (ADR-008), then Ctrl+V via SendInput.
-pub fn inject_text(text: &str) -> Result<(), InjectError> {
+/// Insert `text` into the InputTarget captured at dictation start.
+///
+/// Order: UIA ValuePattern (empty fields) → focus restore + clipboard paste → SendInput unicode.
+pub fn inject_text(text: &str, target: &InputTarget) -> Result<(), InjectError> {
+    // #region agent log
+    let t0 = std::time::Instant::now();
+    crate::agent_debug_log(
+        "C",
+        "inject.rs:inject_text:enter",
+        "inject_text enter",
+        serde_json::json!({
+            "textLen": text.len(),
+            "canInsert": target.can_insert,
+            "strategy": format!("{:?}", target.strategy_hint),
+        }),
+    );
+    // #endregion
+    if text.is_empty() {
+        return Ok(());
+    }
+
+    if !target.can_insert {
+        return Err(InjectError::NoTextField);
+    }
+
+    let element = prepare_target_for_inject(target)?;
+    // #region agent log
+    crate::agent_debug_log(
+        "C",
+        "inject.rs:inject_text:after_prepare",
+        "prepare_target done",
+        serde_json::json!({
+            "hasElement": element.is_some(),
+            "elapsedMs": t0.elapsed().as_millis() as u64,
+        }),
+    );
+    // #endregion
+    thread::sleep(Duration::from_millis(25));
+
+    if let Some(ref el) = element {
+        if try_uia_insert(el, text).is_ok() {
+            // #region agent log
+            crate::agent_debug_log(
+                "C",
+                "inject.rs:inject_text:uia_ok",
+                "uia insert ok",
+                serde_json::json!({ "elapsedMs": t0.elapsed().as_millis() as u64 }),
+            );
+            // #endregion
+            return Ok(());
+        }
+    }
+
+    // Re-focus right before paste — ASR can take seconds.
+    let _ = prepare_target_for_inject(target)?;
+    thread::sleep(Duration::from_millis(15));
+
+    if clipboard_paste(text).is_ok() {
+        // #region agent log
+        crate::agent_debug_log(
+            "C",
+            "inject.rs:inject_text:paste_ok",
+            "clipboard paste ok",
+            serde_json::json!({ "elapsedMs": t0.elapsed().as_millis() as u64 }),
+        );
+        // #endregion
+        return Ok(());
+    }
+
+    // Last resort: type unicode directly into the focused control.
+    let _ = prepare_target_for_inject(target)?;
+    thread::sleep(Duration::from_millis(15));
+    send_input_unicode(text).map_err(InjectError::Input)?;
+    // #region agent log
+    crate::agent_debug_log(
+        "C",
+        "inject.rs:inject_text:unicode_ok",
+        "send_input unicode ok",
+        serde_json::json!({ "elapsedMs": t0.elapsed().as_millis() as u64 }),
+    );
+    // #endregion
+    Ok(())
+}
+
+fn clipboard_paste(text: &str) -> Result<(), InjectError> {
     let mut clipboard = Clipboard::new().map_err(|e| InjectError::Clipboard(e.to_string()))?;
     let previous = clipboard.get_text().ok();
 
@@ -22,26 +118,86 @@ pub fn inject_text(text: &str) -> Result<(), InjectError> {
         .set_text(text)
         .map_err(|e| InjectError::Clipboard(e.to_string()))?;
 
-    // Brief delay so target app sees updated clipboard.
-    thread::sleep(Duration::from_millis(40));
+    thread::sleep(Duration::from_millis(20));
 
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| InjectError::Input(e.to_string()))?;
-    enigo
-        .key(Key::Control, Direction::Press)
-        .map_err(|e| InjectError::Input(e.to_string()))?;
-    // Prefer physical V key for Ctrl+V paste across layouts.
-    enigo
-        .key(Key::V, Direction::Click)
-        .map_err(|e| InjectError::Input(e.to_string()))?;
-    enigo
-        .key(Key::Control, Direction::Release)
-        .map_err(|e| InjectError::Input(e.to_string()))?;
+    send_ctrl_v().map_err(InjectError::Input)?;
 
-    // Restore previous clipboard asynchronously-ish (best effort).
+    // Give the target app time to consume clipboard before we restore it.
+    thread::sleep(Duration::from_millis(50));
+
     if let Some(prev) = previous {
-        thread::sleep(Duration::from_millis(80));
         let _ = clipboard.set_text(prev);
     }
 
     Ok(())
+}
+
+fn send_ctrl_v() -> Result<(), String> {
+    let inputs = [
+        key_vk(VK_CONTROL, false),
+        key_vk(VK_V, false),
+        key_vk(VK_V, true),
+        key_vk(VK_CONTROL, true),
+    ];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        return Err(format!("Ctrl+V SendInput sent {sent}/{}", inputs.len()));
+    }
+    Ok(())
+}
+
+fn send_input_unicode(text: &str) -> Result<(), String> {
+    let mut inputs: Vec<INPUT> = Vec::with_capacity(text.chars().count() * 2);
+    for ch in text.encode_utf16() {
+        inputs.push(unicode_key(ch, false));
+        inputs.push(unicode_key(ch, true));
+    }
+    if inputs.is_empty() {
+        return Ok(());
+    }
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        return Err(format!("SendInput sent {sent}/{}", inputs.len()));
+    }
+    Ok(())
+}
+
+fn key_vk(vk: VIRTUAL_KEY, key_up: bool) -> INPUT {
+    let flags = if key_up {
+        KEYEVENTF_KEYUP
+    } else {
+        Default::default()
+    };
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+fn unicode_key(scan: u16, key_up: bool) -> INPUT {
+    let flags = if key_up {
+        KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+    } else {
+        KEYEVENTF_UNICODE
+    };
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: Default::default(),
+                wScan: scan,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }

@@ -68,13 +68,13 @@
 - Решение: Режимы `local` | `hybrid` | `cloud` как системный switch на уровне pipeline и router.
 - Последствия: Полностью локальная работа архитектурно возможна (реализация local ASR/LLM — V1+).
 
-## ADR-008: Text injection — clipboard-first (Windows)
+## ADR-008: Text injection — UIA-first with focused clipboard fallback (Windows)
 
 - Дата: 2026-07-17
 - Статус: accepted
-- Контекст: Нужна вставка текста в любое приложение без per-app плагинов.
-- Решение: Порт `TextInjector`: (1) clipboard + Ctrl+V, (2) UI Automation, (3) SendInput. Per-app профили при сбоях.
-- Последствия: Максимальное покрытие приложений; нужны права accessibility; риск конфликтов с буфером — документировать UX.
+- Контекст: Нужна вставка текста в то поле, где был курсор на старте диктовки, без per-app плагинов. Clipboard+Ctrl+V в текущий foreground ломается при смене окна во время записи.
+- Решение: На `start()` захватывать `InputTarget` (HWND + UIA RuntimeId + can_insert). Порт inject: (1) restore focus + UIA ValuePattern для пустых полей, (2) focus restore + clipboard Ctrl+V (основной путь для caret mid-string), (3) SendInput unicode. macOS — отдельный adapter позже (ADR-012).
+- Последствия: Текст уходит в сохранённый target; при отсутствии текстового поля — предупреждение и сохранение в history; риск конфликтов с буфером на fallback — документировать UX.
 
 ## ADR-009: AI refine guardrails
 

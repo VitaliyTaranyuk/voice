@@ -6,6 +6,8 @@ export type CaptureStats = {
   frames: number;
   durationMs: number;
   peakAmplitude: number;
+  /** Rolling level for live meters (0..1). */
+  level?: number;
 };
 
 export type AppContext = {
@@ -25,6 +27,8 @@ export type RuntimeInfo = {
   apiBaseUrl: string;
 };
 
+export type RecordingMode = 'push_to_talk' | 'toggle';
+
 export type SessionSnapshot = {
   sessionId: string | null;
   status: DictationSessionStatus | string;
@@ -34,6 +38,8 @@ export type SessionSnapshot = {
   rawText?: string | null;
   finalText?: string | null;
   appContext?: AppContext | null;
+  recordingMode?: RecordingMode | null;
+  canInsert?: boolean | null;
 };
 
 export type HistoryItem = {

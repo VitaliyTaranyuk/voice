@@ -46,7 +46,9 @@ pub fn start_dictation(
     state: State<'_, PipelineState>,
 ) -> Result<SessionSnapshot, String> {
     let snap = state.start().map_err(|e| e.to_string())?;
+    crate::overlay::play_cue(crate::overlay::CueKind::Start);
     let _ = app.emit("dictation://status", &snap);
+    crate::overlay::sync_overlay(&app, &snap);
     Ok(snap)
 }
 
@@ -65,12 +67,32 @@ pub fn cancel_dictation(
 ) -> Result<SessionSnapshot, String> {
     let snap = state.cancel().map_err(|e| e.to_string())?;
     let _ = app.emit("dictation://status", &snap);
+    crate::overlay::sync_overlay(&app, &snap);
     Ok(snap)
 }
 
 #[tauri::command]
 pub fn list_history(state: State<'_, PipelineState>) -> Result<Vec<HistoryItem>, String> {
     state.list_history(50).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn copy_text(text: String) -> Result<(), String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| format!("clipboard unavailable: {e}"))?;
+    clipboard
+        .set_text(text)
+        .map_err(|e| format!("clipboard write failed: {e}"))
+}
+
+#[tauri::command]
+pub fn copy_last_history(state: State<'_, PipelineState>) -> Result<String, String> {
+    let items = state.list_history(1).map_err(|e| e.to_string())?;
+    let Some(item) = items.into_iter().next() else {
+        return Err("No dictations yet".into());
+    };
+    copy_text(item.text.clone())?;
+    Ok(item.text)
 }
 
 #[tauri::command]
