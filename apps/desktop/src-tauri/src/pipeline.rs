@@ -210,6 +210,10 @@ impl PipelineState {
     pub fn list_history(&self, limit: i64) -> Result<Vec<crate::history::HistoryItem>, String> {
         self.history.list_recent(limit).map_err(|e| e.to_string())
     }
+
+    pub async fn check_api_health(&self) -> Result<bool, String> {
+        self.api.health().await.map(|_| true).map_err(|e| e.to_string())
+    }
 }
 
 enum ProcessPhase {

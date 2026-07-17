@@ -72,3 +72,8 @@ pub fn cancel_dictation(
 pub fn list_history(state: State<'_, PipelineState>) -> Result<Vec<HistoryItem>, String> {
     state.list_history(50).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn check_api_health(state: State<'_, PipelineState>) -> Result<bool, String> {
+    state.check_api_health().await.map_err(|e| e.to_string())
+}
