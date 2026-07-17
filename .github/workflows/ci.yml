@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  js:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm --filter @voice/contracts build
+      - run: pnpm --filter @voice/domain-types build
+      - run: pnpm --filter @voice/sdk build
+      - run: pnpm --filter @voice/desktop typecheck
+
+  api:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - working-directory: services/api
+        run: uv sync
+      - working-directory: services/api
+        run: uv run python -c "from app.main import app; print(app.title)"
+
+  desktop-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install
+      - run: pnpm --filter @voice/contracts --filter @voice/domain-types --filter @voice/sdk build
+      - name: Check Rust crate
+        working-directory: apps/desktop/src-tauri
+        run: cargo check

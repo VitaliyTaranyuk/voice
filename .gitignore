@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+dist/
+dist-ssr/
+*.local
+
+# Rust / Tauri
+**/src-tauri/target/
+**/src-tauri/gen/
+*.pdb
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Turbo / build
+.turbo/
+*.tsbuildinfo
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*

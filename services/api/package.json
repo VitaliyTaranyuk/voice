@@ -1,0 +1,11 @@
+{
+  "name": "@voice/api",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8787",
+    "start": "uv run uvicorn app.main:app --host 127.0.0.1 --port 8787",
+    "lint": "uv run ruff check app",
+    "typecheck": "uv run pyright"
+  }
+}
