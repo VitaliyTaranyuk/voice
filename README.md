@@ -2,61 +2,76 @@
 
 AI Voice Input Assistant для Windows. Источник истины: [VitaliyTaranyuk/voice](https://github.com/VitaliyTaranyuk/voice).
 
-**MVP:** Windows desktop (Tauri v2) · LLM refine: **DeepSeek API** · без Claude/Anthropic.
+**MVP:** Windows desktop (Tauri v2) · ASR: Whisper / Deepgram · LLM refine: **DeepSeek** · без Claude/Anthropic.
+
+## Что умеет сейчас
+
+1. Глобальный PTT: **Ctrl+Shift+Space**
+2. Захват микрофона (WASAPI)
+3. Распознавание речи через API (`/v1/ai/asr`)
+4. Правка текста через DeepSeek (`/v1/ai/refine`) с guardrails
+5. Вставка в активное приложение (clipboard + Ctrl+V)
+6. Локальная история (SQLite)
+7. Определение активного приложения (IDE / chat / email / …)
 
 ## Документация
 
 | Файл | Содержание |
 | --- | --- |
-| [`.project/instructions.md`](.project/instructions.md) | Правила разработки и Git |
-| [`.project/architecture.md`](.project/architecture.md) | Архитектура продукта |
+| [`.project/architecture.md`](.project/architecture.md) | Архитектура |
 | [`.project/decisions.md`](.project/decisions.md) | ADR |
-| [`.project/conventions.md`](.project/conventions.md) | Стек и соглашения |
-| [`docs/`](docs/) | Доп. материалы |
-
-## Структура monorepo
-
-```
-apps/desktop          Tauri v2 + React (Windows-first)
-services/api          FastAPI (/v1 health + refine → DeepSeek)
-packages/contracts    Zod API/domain schemas
-packages/domain-types Shared TS domain types
-packages/sdk          HTTP client для /v1
-```
+| [`.project/conventions.md`](.project/conventions.md) | Стек |
 
 ## Требования
 
 - Node.js ≥ 20, pnpm 9
-- Rust stable (для desktop)
+- Rust stable + **VS 2022 Build Tools** (C++)
 - Python ≥ 3.12 + [uv](https://github.com/astral-sh/uv)
-- Windows: WebView2 (обычно уже установлен)
-- Windows: [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) с workload **Desktop development with C++** (`link.exe`)
+- WebView2
+- API keys (для реального распознавания/правки):
+  - `OPENAI_API_KEY` и/или `DEEPGRAM_API_KEY` (ASR)
+  - `DEEPSEEK_API_KEY` (refine)
 
-## Быстрый старт
+## Запуск (полный цикл)
 
-```bash
+```powershell
+# 1) зависимости
 pnpm install
 pnpm --filter @voice/contracts --filter @voice/domain-types --filter @voice/sdk build
 
-# API (passthrough refine без ключа; с ключом — DeepSeek)
+# 2) API
 cd services/api
-cp .env.example .env
+copy .env.example .env
+# заполните OPENAI_API_KEY (или DEEPGRAM_API_KEY) и DEEPSEEK_API_KEY
 uv sync
-uv run uvicorn app.main:app --reload --port 8787
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8787
 
-# Desktop (из корня)
+# 3) Desktop (другой терминал, из корня)
 pnpm --filter @voice/desktop exec tauri dev
 ```
 
-Опционально в `services/api/.env`:
+Опционально: `VOICE_API_BASE_URL=http://127.0.0.1:8787` (это default).
+
+### Как пользоваться
+
+1. Запустите API и desktop
+2. Кликните в текстовое поле (Notepad, Cursor, Slack, …)
+3. Удерживайте **Ctrl+Shift+Space**, говорите, отпустите
+4. Текст появится в поле после ASR + DeepSeek + paste
+
+## Структура
 
 ```
-DEEPSEEK_API_KEY=sk-2b2b8d778a324c78b7b815725b82f06c
+apps/desktop          Tauri + React (Windows-first)
+services/api          FastAPI /v1 health, asr, refine
+packages/contracts    Zod schemas
+packages/domain-types Domain types
+packages/sdk          HTTP client
 ```
 
 ## Статус
 
-- **M0** Done — monorepo, contracts/sdk, FastAPI, Tauri shell
-- **M1** Done — mic capture (cpal) + PTT `Ctrl+Shift+Space`
-- **M2** Next — streaming ASR
-- **M3** Next — DeepSeek refine + text injection
+- **M0** Done — monorepo foundation
+- **M1** Done — mic + PTT
+- **M2** Done — ASR upload pipeline
+- **M3** Done — DeepSeek refine + inject + history
