@@ -29,8 +29,9 @@ pub fn inject_text(text: &str) -> Result<(), InjectError> {
     enigo
         .key(Key::Control, Direction::Press)
         .map_err(|e| InjectError::Input(e.to_string()))?;
+    // Prefer physical V key for Ctrl+V paste across layouts.
     enigo
-        .key(Key::Unicode('v'), Direction::Click)
+        .key(Key::V, Direction::Click)
         .map_err(|e| InjectError::Input(e.to_string()))?;
     enigo
         .key(Key::Control, Direction::Release)

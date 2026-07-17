@@ -48,6 +48,19 @@ impl VoiceApi {
         }
     }
 
+    pub async fn health(&self) -> Result<(), CloudError> {
+        let response = self
+            .client
+            .get(format!("{}/v1/health", self.base_url))
+            .send()
+            .await
+            .map_err(|e| CloudError::Http(e.to_string()))?;
+        if !response.status().is_success() {
+            return Err(CloudError::Api(format!("health {}", response.status())));
+        }
+        Ok(())
+    }
+
     pub async fn transcribe(&self, wav: Vec<u8>, locale: &str) -> Result<AsrResult, CloudError> {
         let part = reqwest::multipart::Part::bytes(wav)
             .file_name("dictation.wav")

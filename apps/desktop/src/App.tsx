@@ -17,12 +17,14 @@ export default function App() {
     session,
     privacyMode,
     history,
+    apiOnline,
     busy,
     error,
     setRuntime,
     setSession,
     setPrivacyMode,
     setHistory,
+    setApiOnline,
     setBusy,
     setError,
   } = useSessionStore();
@@ -36,6 +38,15 @@ export default function App() {
     }
   }
 
+  async function refreshApiHealth() {
+    try {
+      const ok = await invoke<boolean>('check_api_health');
+      setApiOnline(ok);
+    } catch {
+      setApiOnline(false);
+    }
+  }
+
   useEffect(() => {
     void (async () => {
       try {
@@ -44,6 +55,7 @@ export default function App() {
         setRuntime(info);
         setSession(snap);
         await refreshHistory();
+        await refreshApiHealth();
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -65,9 +77,14 @@ export default function App() {
         .catch(() => undefined);
     }, 250);
 
+    const healthPoll = window.setInterval(() => {
+      void refreshApiHealth();
+    }, 5000);
+
     return () => {
       unlisten?.();
       window.clearInterval(poll);
+      window.clearInterval(healthPoll);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -196,7 +213,9 @@ export default function App() {
         <dl>
           <div>
             <dt>API</dt>
-            <dd>{runtime?.apiBaseUrl ?? '—'}</dd>
+            <dd className={apiOnline ? 'ok' : 'bad'}>
+              {apiOnline ? 'online' : 'offline'} · {runtime?.apiBaseUrl ?? '—'}
+            </dd>
           </div>
           <div>
             <dt>LLM</dt>
@@ -207,6 +226,12 @@ export default function App() {
             <dd>{runtime?.version ?? '—'}</dd>
           </div>
         </dl>
+        {!apiOnline ? (
+          <p className="hint warn">
+            API offline. Run <code>pwsh scripts/dev-api.ps1</code> and set keys in{' '}
+            <code>services/api/.env</code>.
+          </p>
+        ) : null}
       </section>
 
       {error ? <p className="error">{error}</p> : null}
