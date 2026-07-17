@@ -47,46 +47,6 @@ fn toggle_main_window(app: &AppHandle) {
     show_main_window(app);
 }
 
-// #region agent log
-pub(crate) fn agent_debug_log(
-    hypothesis_id: &str,
-    location: &str,
-    message: &str,
-    data: serde_json::Value,
-) {
-    use std::io::Write;
-    let payload = serde_json::json!({
-        "sessionId": "73f0f8",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0),
-    });
-    let line = payload.to_string();
-    // Absolute workspace path first — Tauri CWD is often src-tauri/.
-    let paths = [
-        std::path::PathBuf::from(r"c:\Users\CyberPC\Desktop\Vibe\voice\debug-73f0f8.log"),
-        std::path::PathBuf::from("debug-73f0f8.log"),
-        std::path::PathBuf::from("../debug-73f0f8.log"),
-        std::path::PathBuf::from("../../debug-73f0f8.log"),
-    ];
-    for path in &paths {
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-        {
-            let _ = writeln!(f, "{line}");
-            break;
-        }
-    }
-}
-// #endregion
-
 /// Prevent multiple Voice windows: named mutex + focus existing main window.
 /// HANDLE is Copy and does not auto-close; we keep the value so we never CloseHandle
 /// until process exit (OS then releases the mutex).

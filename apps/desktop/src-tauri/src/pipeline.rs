@@ -58,6 +58,8 @@ struct Inner {
     input_target: Option<InputTarget>,
     recording_mode: Option<RecordingMode>,
     message_override: Option<String>,
+    /// Bumped on each new take / cancel so abandoned ASR tasks cannot overwrite state.
+    process_gen: u64,
 }
 
 impl Default for Inner {
@@ -72,6 +74,7 @@ impl Default for Inner {
             input_target: None,
             recording_mode: None,
             message_override: None,
+            process_gen: 0,
         }
     }
 }
@@ -96,24 +99,7 @@ impl PipelineState {
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
-        // #region agent log
-        let t0 = std::time::Instant::now();
-        // #endregion
         let guard = self.inner.lock().expect("pipeline mutex poisoned");
-        // #region agent log
-        let lock_ms = t0.elapsed().as_millis() as u64;
-        if lock_ms >= 50 {
-            crate::agent_debug_log(
-                "A",
-                "pipeline.rs:snapshot:slow_lock",
-                "snapshot waited on pipeline mutex",
-                serde_json::json!({
-                    "lockWaitMs": lock_ms,
-                    "status": format!("{:?}", guard.status),
-                }),
-            );
-        }
-        // #endregion
         let audio = if guard.status == DictationStatus::Recording {
             self.mic.stats()
         } else {
@@ -134,14 +120,23 @@ impl PipelineState {
     pub fn start_with_mode(&self, mode: RecordingMode) -> Result<SessionSnapshot, PipelineError> {
         let mut guard = self.inner.lock().expect("pipeline mutex poisoned");
         match guard.status {
+            DictationStatus::Recording => Err(PipelineError::InvalidTransition),
+            // Idle-like OR busy processing: start a new take (bumps gen → abandons in-flight ASR).
             DictationStatus::Idle
             | DictationStatus::Completed
             | DictationStatus::Failed
-            | DictationStatus::Cancelled => {
+            | DictationStatus::Cancelled
+            | DictationStatus::Transcribing
+            | DictationStatus::Refining
+            | DictationStatus::Injecting => {
+                if self.mic.is_active() {
+                    let _ = self.mic.stop();
+                }
                 let ctx = detect_foreground().ok();
                 let target = capture_focused().ok();
                 let can_insert = target.as_ref().map(|t| t.can_insert);
                 let stats = self.mic.start().map_err(PipelineError::Audio)?;
+                guard.process_gen = guard.process_gen.wrapping_add(1);
                 guard.session_id = Some(Uuid::new_v4().to_string());
                 guard.status = DictationStatus::Recording;
                 guard.last_audio = Some(stats.clone());
@@ -157,53 +152,17 @@ impl PipelineState {
                 };
                 Ok(snapshot_from(&guard, Some(stats)))
             }
-            _ => Err(PipelineError::InvalidTransition),
         }
     }
 
     /// Stop capture and run ASR → DeepSeek refine → inject into saved InputTarget.
     pub fn stop_and_process(&self, app: AppHandle) -> Result<SessionSnapshot, PipelineError> {
-        // #region agent log
-        let t0 = std::time::Instant::now();
-        crate::agent_debug_log(
-            "B",
-            "pipeline.rs:stop_and_process:enter",
-            "stop_and_process entered",
-            serde_json::json!({
-                "thread": format!("{:?}", std::thread::current().id()),
-            }),
-        );
-        // #endregion
-        let (session_id, stats, samples, sample_rate, app_context, input_target) = {
+        let (session_id, stats, samples, sample_rate, app_context, input_target, process_gen) = {
             let mut guard = self.inner.lock().expect("pipeline mutex poisoned");
             if guard.status != DictationStatus::Recording {
                 return Err(PipelineError::InvalidTransition);
             }
-            // #region agent log
-            crate::agent_debug_log(
-                "B",
-                "pipeline.rs:stop_and_process:before_mic_stop",
-                "about to mic.stop on current thread",
-                serde_json::json!({
-                    "elapsedMs": t0.elapsed().as_millis() as u64,
-                    "thread": format!("{:?}", std::thread::current().id()),
-                }),
-            );
-            // #endregion
             let (stats, samples, sample_rate) = self.mic.stop().map_err(PipelineError::Audio)?;
-            // #region agent log
-            crate::agent_debug_log(
-                "B",
-                "pipeline.rs:stop_and_process:after_mic_stop",
-                "mic.stop finished",
-                serde_json::json!({
-                    "elapsedMs": t0.elapsed().as_millis() as u64,
-                    "durationMs": stats.duration_ms,
-                    "sampleCount": samples.len(),
-                    "sampleRate": sample_rate,
-                }),
-            );
-            // #endregion
 
             // Accidental chord / tap: skip ASR entirely.
             if stats.duration_ms < 300 {
@@ -254,6 +213,7 @@ impl PipelineState {
             guard.status = DictationStatus::Transcribing;
             guard.last_audio = Some(stats.clone());
             guard.message_override = None;
+            let process_gen = guard.process_gen;
             (
                 session_id,
                 stats,
@@ -261,81 +221,27 @@ impl PipelineState {
                 sample_rate,
                 app_context,
                 input_target,
+                process_gen,
             )
         };
 
         let snap = self.snapshot();
         let _ = app.emit("dictation://status", &snap);
-        // #region agent log
-        crate::agent_debug_log(
-            "B",
-            "pipeline.rs:stop_and_process:before_sync_overlay",
-            "about to sync_overlay on current thread",
-            serde_json::json!({
-                "elapsedMs": t0.elapsed().as_millis() as u64,
-                "thread": format!("{:?}", std::thread::current().id()),
-            }),
-        );
-        // #endregion
         crate::overlay::sync_overlay(&app, &snap);
-        // #region agent log
-        crate::agent_debug_log(
-            "B",
-            "pipeline.rs:stop_and_process:after_sync_overlay",
-            "sync_overlay finished",
-            serde_json::json!({
-                "elapsedMs": t0.elapsed().as_millis() as u64,
-            }),
-        );
-        // #endregion
 
         let history = Arc::clone(&self.history);
         let api = self.api.clone();
         let inner = Arc::clone(&self.inner);
 
         tauri::async_runtime::spawn(async move {
-            // #region agent log
-            crate::agent_debug_log(
-                "E",
-                "pipeline.rs:async:enter",
-                "async stop_and_process task started",
-                serde_json::json!({
-                    "thread": format!("{:?}", std::thread::current().id()),
-                }),
-            );
-            // #endregion
             let emit_status = |status: DictationStatus, message: &str| {
-                // #region agent log
-                crate::agent_debug_log(
-                    "A",
-                    "pipeline.rs:emit_status:before",
-                    "emit_status about to lock+sync",
-                    serde_json::json!({
-                        "status": format!("{:?}", status),
-                        "thread": format!("{:?}", std::thread::current().id()),
-                    }),
-                );
-                // #endregion
                 let snap = {
                     let Ok(mut guard) = inner.lock() else {
-                        // #region agent log
-                        crate::agent_debug_log(
-                            "D",
-                            "pipeline.rs:emit_status:lock_fail",
-                            "pipeline mutex poisoned",
-                            serde_json::json!({ "status": format!("{:?}", status) }),
-                        );
-                        // #endregion
                         return;
                     };
-                    // #region agent log
-                    crate::agent_debug_log(
-                        "D",
-                        "pipeline.rs:emit_status:locked",
-                        "pipeline mutex acquired",
-                        serde_json::json!({ "status": format!("{:?}", status) }),
-                    );
-                    // #endregion
+                    if guard.process_gen != process_gen {
+                        return;
+                    }
                     guard.status = status;
                     guard.message_override = Some(message.to_string());
                     snapshot_from(&guard, guard.last_audio.clone())
@@ -343,29 +249,15 @@ impl PipelineState {
                 // Never call Win32/Tauri window APIs while holding the pipeline mutex.
                 let _ = app.emit("dictation://status", &snap);
                 crate::overlay::sync_overlay(&app, &snap);
-                // #region agent log
-                crate::agent_debug_log(
-                    "A",
-                    "pipeline.rs:emit_status:after",
-                    "emit_status finished",
-                    serde_json::json!({ "status": format!("{:?}", status) }),
-                );
-                // #endregion
             };
 
             emit_status(DictationStatus::Transcribing, "Transcribing…");
-            // #region agent log
-            crate::agent_debug_log(
-                "E",
-                "pipeline.rs:async:before_process",
-                "about to call process_dictation",
-                serde_json::json!({}),
-            );
-            // #endregion
 
             let outcome = process_dictation(
                 api,
                 history,
+                Arc::clone(&inner),
+                process_gen,
                 session_id,
                 samples,
                 sample_rate,
@@ -382,19 +274,13 @@ impl PipelineState {
             )
             .await;
 
-            // #region agent log
-            crate::agent_debug_log(
-                "D",
-                "pipeline.rs:async:after_process",
-                "process_dictation finished",
-                serde_json::json!({
-                    "ok": outcome.is_ok(),
-                    "err": outcome.as_ref().err().cloned(),
-                }),
-            );
-            // #endregion
-
             let mut guard = inner.lock().expect("pipeline mutex poisoned");
+            if guard.process_gen != process_gen {
+                return;
+            }
+            if matches!(outcome.as_ref().err().map(String::as_str), Some(ABANDONED_ERR)) {
+                return;
+            }
             let terminal = match outcome {
                 Ok(result) => {
                     guard.status = DictationStatus::Completed;
@@ -449,6 +335,7 @@ impl PipelineState {
         if self.mic.is_active() {
             let _ = self.mic.stop();
         }
+        guard.process_gen = guard.process_gen.wrapping_add(1);
         guard.status = DictationStatus::Cancelled;
         guard.recording_mode = None;
         guard.input_target = None;
@@ -481,9 +368,14 @@ struct ProcessOutcome {
     message: String,
 }
 
+/// Marker: take was superseded by a newer recording — drop without UI Failed.
+const ABANDONED_ERR: &str = "__abandoned__";
+
 async fn process_dictation<F>(
     api: VoiceApi,
     history: Arc<HistoryStore>,
+    inner: Arc<Mutex<Inner>>,
+    process_gen: u64,
     session_id: String,
     samples: Vec<f32>,
     sample_rate: u32,
@@ -494,65 +386,29 @@ async fn process_dictation<F>(
 where
     F: FnMut(ProcessPhase),
 {
+    let still_current = || {
+        inner
+            .lock()
+            .map(|g| g.process_gen == process_gen)
+            .unwrap_or(false)
+    };
     if samples.len() < (sample_rate as usize / 10) {
         return Err("Recording too short — hold the hotkey and speak".into());
     }
 
-    // #region agent log
-    let t_proc = std::time::Instant::now();
-    crate::agent_debug_log(
-        "D",
-        "pipeline.rs:process_dictation:before_encode",
-        "encoding wav",
-        serde_json::json!({
-            "sampleCount": samples.len(),
-            "sampleRate": sample_rate,
-            "sessionId": session_id,
-        }),
-    );
-    // #endregion
     let wav = encode_wav_pcm16(&samples, sample_rate).map_err(|e| e.to_string())?;
-    // #region agent log
-    crate::agent_debug_log(
-        "D",
-        "pipeline.rs:process_dictation:after_encode",
-        "wav encoded",
-        serde_json::json!({
-            "wavBytes": wav.len(),
-            "encodeMs": t_proc.elapsed().as_millis() as u64,
-        }),
-    );
-    // #endregion
     let locale = "ru";
 
-    // #region agent log
-    let t_asr = std::time::Instant::now();
-    crate::agent_debug_log(
-        "A",
-        "pipeline.rs:process_dictation:before_asr",
-        "calling api.transcribe",
-        serde_json::json!({ "wavBytes": wav.len() }),
-    );
-    // #endregion
     let asr = api.transcribe(wav, locale).await.map_err(|e| match e {
         crate::cloud::CloudError::EmptyTranscript => NO_SPEECH_ERR.to_string(),
         other => other.to_string(),
     })?;
-    // #region agent log
-    crate::agent_debug_log(
-        "A",
-        "pipeline.rs:process_dictation:after_asr",
-        "api.transcribe returned",
-        serde_json::json!({
-            "asrMs": t_asr.elapsed().as_millis() as u64,
-            "provider": asr.provider,
-            "textLen": asr.text.len(),
-        }),
-    );
-    // #endregion
     let Some(raw) = sanitize_transcript(&asr.text) else {
         return Err(NO_SPEECH_ERR.into());
     };
+    if !still_current() {
+        return Err(ABANDONED_ERR.into());
+    }
 
     let final_text = if skip_refine_enabled() {
         raw.clone()
@@ -566,29 +422,9 @@ where
         let process = app_context.as_ref().and_then(|c| c.process_name.as_deref());
         let title = app_context.as_ref().and_then(|c| c.window_title.as_deref());
 
-        // #region agent log
-        let t_refine = std::time::Instant::now();
-        crate::agent_debug_log(
-            "A",
-            "pipeline.rs:process_dictation:before_refine",
-            "calling api.refine",
-            serde_json::json!({ "rawLen": raw.len() }),
-        );
-        // #endregion
         // ADR-009: refine failure → raw ASR (never block inject on polish errors).
         let refined_text = match api.refine(&raw, locale, category, process, title).await {
             Ok(refined) => {
-                // #region agent log
-                crate::agent_debug_log(
-                    "A",
-                    "pipeline.rs:process_dictation:after_refine",
-                    "api.refine returned",
-                    serde_json::json!({
-                        "refineMs": t_refine.elapsed().as_millis() as u64,
-                        "textLen": refined.text.len(),
-                    }),
-                );
-                // #endregion
                 let t = refined.text.trim().to_string();
                 match sanitize_transcript(&t) {
                     Some(cleaned) => cleaned,
@@ -605,18 +441,9 @@ where
         refined_text
     };
 
-    // #region agent log
-    crate::agent_debug_log(
-        "E",
-        "pipeline.rs:process_dictation:before_inject",
-        "about to inject",
-        serde_json::json!({
-            "finalLen": final_text.len(),
-            "hasTarget": input_target.is_some(),
-            "totalMs": t_proc.elapsed().as_millis() as u64,
-        }),
-    );
-    // #endregion
+    if !still_current() {
+        return Err(ABANDONED_ERR.into());
+    }
     on_phase(ProcessPhase::Injecting);
 
     let save_history = |final_text: &str, raw: &str| {
@@ -793,6 +620,10 @@ fn sanitize_transcript(raw: &str) -> Option<String> {
 }
 
 fn is_filler_token(token: &str) -> bool {
+    // Keep numbers / mixed tokens ("5-10", "v2", "3.14") — only drop pure punctuation.
+    if token.chars().any(|c| c.is_ascii_digit()) {
+        return false;
+    }
     let letters: String = token
         .chars()
         .filter(|c| c.is_alphabetic())

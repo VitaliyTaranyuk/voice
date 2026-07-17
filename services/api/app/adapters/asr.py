@@ -141,48 +141,62 @@ class LocalWhisperAsrAdapter:
         model = self._ensure_model()
         samples = self._wav_bytes_to_float32(audio)
 
-        # vad_filter uses onnxruntime and can hang on Windows short clips.
-        # Enable only for longer takes; short silence is rejected on the desktop.
         duration_s = len(samples) / 16000.0
+        # Quiet mics (peak~0.1) make Whisper/VAD drop or garble speech — boost first.
+        peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+        if peak > 1e-4:
+            samples = np.clip(samples * (0.9 / peak), -1.0, 1.0)
+        # Sensitive VAD after normalize: split on speech, don't skip quiet talk.
         use_vad = duration_s >= 1.5
         t0 = time.perf_counter()
-        segments, info = model.transcribe(  # type: ignore[attr-defined]
-            samples,
-            language=language or "ru",
-            beam_size=1,
-            best_of=1,
-            temperature=0.0,
-            vad_filter=use_vad,
-            # Reject silence / filler hallucinations from Whisper.
-            no_speech_threshold=0.6,
-            compression_ratio_threshold=2.4,
-            log_prob_threshold=-1.0,
-            # True: better punctuation/coherence across segments; small latency cost vs beam>1
-            condition_on_previous_text=True,
-            without_timestamps=True,
+        text = self._transcribe_one(
+            model, samples, language=language or "ru", use_vad=use_vad
         )
-        parts: list[str] = []
-        for segment in segments:
-            no_speech = float(getattr(segment, "no_speech_prob", 0.0) or 0.0)
-            if no_speech > 0.6:
-                continue
-            avg_logprob = float(getattr(segment, "avg_logprob", 0.0) or 0.0)
-            if avg_logprob < -1.0:
-                continue
-            piece = str(getattr(segment, "text", "") or "").strip()
-            if piece:
-                parts.append(piece)
-        text = " ".join(parts).strip()
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         print(
             f"Voice API: ASR {LocalWhisperAsrAdapter._runtime} "
             f"{elapsed_ms}ms · {duration_s:.1f}s audio · vad={use_vad}"
         )
-        lang = getattr(info, "language", None)
+        lang = language or "ru"
         warnings: list[str] = []
         if LocalWhisperAsrAdapter._runtime.startswith("cpu/"):
             warnings.append(f"local_whisper runtime: {LocalWhisperAsrAdapter._runtime}")
         return text, lang, warnings
+
+    def _transcribe_one(
+        self,
+        model: object,
+        samples: np.ndarray,
+        *,
+        language: str,
+        use_vad: bool,
+    ) -> str:
+        kwargs: dict = {
+            "language": language,
+            "beam_size": 5,
+            "best_of": 5,
+            "temperature": 0.0,
+            "vad_filter": use_vad,
+            "no_speech_threshold": 0.75,
+            "compression_ratio_threshold": 2.4,
+            "log_prob_threshold": -1.2,
+            "condition_on_previous_text": False,
+            "without_timestamps": False,
+        }
+        if use_vad:
+            kwargs["vad_parameters"] = {
+                "threshold": 0.3,
+                "min_speech_duration_ms": 250,
+                "min_silence_duration_ms": 400,
+                "speech_pad_ms": 400,
+            }
+        segments, _info = model.transcribe(samples, **kwargs)  # type: ignore[attr-defined]
+        parts: list[str] = []
+        for segment in segments:
+            piece = str(getattr(segment, "text", "") or "").strip()
+            if piece:
+                parts.append(piece)
+        return " ".join(parts).strip()
 
     async def transcribe(
         self,
@@ -200,10 +214,10 @@ class LocalWhisperAsrAdapter:
                     audio=audio,
                     language=language,
                 ),
-                timeout=35.0,
+                timeout=90.0,
             )
         except TimeoutError as exc:
-            raise AsrError("Local Whisper timed out after 35s") from exc
+            raise AsrError("Local Whisper timed out after 90s") from exc
         except Exception as exc:
             # If a stale CUDA model was cached before fallback existed, reset once.
             err = str(exc).lower()
@@ -218,7 +232,7 @@ class LocalWhisperAsrAdapter:
                             audio=audio,
                             language=language,
                         ),
-                        timeout=35.0,
+                        timeout=90.0,
                     )
                 except Exception as retry_exc:
                     raise AsrError(f"Local Whisper failed: {retry_exc}") from retry_exc

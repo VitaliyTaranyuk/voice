@@ -75,48 +75,13 @@ impl VoiceApi {
             .part("file", part)
             .text("locale", locale.to_string());
 
-        // #region agent log
-        let t_send = std::time::Instant::now();
-        let url = format!("{}/v1/ai/asr", self.base_url);
-        crate::agent_debug_log(
-            "C",
-            "cloud.rs:transcribe:before_send",
-            "POST /v1/ai/asr starting",
-            serde_json::json!({ "url": url, "locale": locale }),
-        );
-        // #endregion
         let response = self
             .client
             .post(format!("{}/v1/ai/asr", self.base_url))
             .multipart(form)
             .send()
             .await
-            .map_err(|e| {
-                // #region agent log
-                crate::agent_debug_log(
-                    "C",
-                    "cloud.rs:transcribe:send_error",
-                    "POST /v1/ai/asr failed",
-                    serde_json::json!({
-                        "error": e.to_string(),
-                        "elapsedMs": t_send.elapsed().as_millis() as u64,
-                    }),
-                );
-                // #endregion
-                CloudError::Http(e.to_string())
-            })?;
-
-        // #region agent log
-        crate::agent_debug_log(
-            "C",
-            "cloud.rs:transcribe:after_send",
-            "POST /v1/ai/asr got response headers",
-            serde_json::json!({
-                "status": response.status().as_u16(),
-                "elapsedMs": t_send.elapsed().as_millis() as u64,
-            }),
-        );
-        // #endregion
+            .map_err(|e| CloudError::Http(e.to_string()))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -128,18 +93,6 @@ impl VoiceApi {
             .json()
             .await
             .map_err(|e| CloudError::Http(e.to_string()))?;
-        // #region agent log
-        crate::agent_debug_log(
-            "A",
-            "cloud.rs:transcribe:parsed",
-            "ASR JSON parsed",
-            serde_json::json!({
-                "provider": result.provider,
-                "textLen": result.text.len(),
-                "totalMs": t_send.elapsed().as_millis() as u64,
-            }),
-        );
-        // #endregion
         if result.text.trim().is_empty() && result.provider == "passthrough" {
             return Err(CloudError::Api(
                 result
@@ -177,50 +130,13 @@ impl VoiceApi {
             "dictionaryHints": [],
         });
 
-        // #region agent log
-        let t_refine = std::time::Instant::now();
-        crate::agent_debug_log(
-            "B",
-            "cloud.rs:refine:before_send",
-            "POST /v1/ai/refine starting",
-            serde_json::json!({
-                "url": format!("{}/v1/ai/refine", self.base_url),
-                "rawLen": raw_transcript.len(),
-            }),
-        );
-        // #endregion
         let response = self
             .client
             .post(format!("{}/v1/ai/refine", self.base_url))
             .json(&body)
             .send()
             .await
-            .map_err(|e| {
-                // #region agent log
-                crate::agent_debug_log(
-                    "B",
-                    "cloud.rs:refine:send_error",
-                    "POST /v1/ai/refine failed",
-                    serde_json::json!({
-                        "error": e.to_string(),
-                        "elapsedMs": t_refine.elapsed().as_millis() as u64,
-                    }),
-                );
-                // #endregion
-                CloudError::Http(e.to_string())
-            })?;
-
-        // #region agent log
-        crate::agent_debug_log(
-            "B",
-            "cloud.rs:refine:after_send",
-            "POST /v1/ai/refine got response headers",
-            serde_json::json!({
-                "status": response.status().as_u16(),
-                "elapsedMs": t_refine.elapsed().as_millis() as u64,
-            }),
-        );
-        // #endregion
+            .map_err(|e| CloudError::Http(e.to_string()))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -232,14 +148,6 @@ impl VoiceApi {
             .json()
             .await
             .map_err(|e| CloudError::Http(e.to_string()))?;
-        // #region agent log
-        crate::agent_debug_log(
-            "B",
-            "cloud.rs:refine:parsed",
-            "Refine JSON parsed",
-            serde_json::json!({ "elapsedMs": t_refine.elapsed().as_millis() as u64 }),
-        );
-        // #endregion
         Ok(result)
     }
 }

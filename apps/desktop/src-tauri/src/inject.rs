@@ -30,19 +30,6 @@ pub enum InjectError {
 ///
 /// Order: UIA ValuePattern (empty fields) → focus restore + clipboard paste → SendInput unicode.
 pub fn inject_text(text: &str, target: &InputTarget) -> Result<(), InjectError> {
-    // #region agent log
-    let t0 = std::time::Instant::now();
-    crate::agent_debug_log(
-        "C",
-        "inject.rs:inject_text:enter",
-        "inject_text enter",
-        serde_json::json!({
-            "textLen": text.len(),
-            "canInsert": target.can_insert,
-            "strategy": format!("{:?}", target.strategy_hint),
-        }),
-    );
-    // #endregion
     if text.is_empty() {
         return Ok(());
     }
@@ -52,29 +39,10 @@ pub fn inject_text(text: &str, target: &InputTarget) -> Result<(), InjectError> 
     }
 
     let element = prepare_target_for_inject(target)?;
-    // #region agent log
-    crate::agent_debug_log(
-        "C",
-        "inject.rs:inject_text:after_prepare",
-        "prepare_target done",
-        serde_json::json!({
-            "hasElement": element.is_some(),
-            "elapsedMs": t0.elapsed().as_millis() as u64,
-        }),
-    );
-    // #endregion
     thread::sleep(Duration::from_millis(25));
 
     if let Some(ref el) = element {
         if try_uia_insert(el, text).is_ok() {
-            // #region agent log
-            crate::agent_debug_log(
-                "C",
-                "inject.rs:inject_text:uia_ok",
-                "uia insert ok",
-                serde_json::json!({ "elapsedMs": t0.elapsed().as_millis() as u64 }),
-            );
-            // #endregion
             return Ok(());
         }
     }
@@ -84,14 +52,6 @@ pub fn inject_text(text: &str, target: &InputTarget) -> Result<(), InjectError> 
     thread::sleep(Duration::from_millis(15));
 
     if clipboard_paste(text).is_ok() {
-        // #region agent log
-        crate::agent_debug_log(
-            "C",
-            "inject.rs:inject_text:paste_ok",
-            "clipboard paste ok",
-            serde_json::json!({ "elapsedMs": t0.elapsed().as_millis() as u64 }),
-        );
-        // #endregion
         return Ok(());
     }
 
@@ -99,14 +59,6 @@ pub fn inject_text(text: &str, target: &InputTarget) -> Result<(), InjectError> 
     let _ = prepare_target_for_inject(target)?;
     thread::sleep(Duration::from_millis(15));
     send_input_unicode(text).map_err(InjectError::Input)?;
-    // #region agent log
-    crate::agent_debug_log(
-        "C",
-        "inject.rs:inject_text:unicode_ok",
-        "send_input unicode ok",
-        serde_json::json!({ "elapsedMs": t0.elapsed().as_millis() as u64 }),
-    );
-    // #endregion
     Ok(())
 }
 

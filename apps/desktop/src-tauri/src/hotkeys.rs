@@ -232,6 +232,14 @@ fn handle_key(vk: u16, down: bool) -> bool {
     false
 }
 
+fn reset_chord_mode() {
+    if let Ok(mut guard) = STATE.lock() {
+        guard.mode = ChordMode::Idle;
+        guard.toggle_chord_latched = false;
+        guard.space_with_shift = false;
+    }
+}
+
 fn start_recording(mode: RecordingMode) {
     let Some(app) = APP.get() else {
         return;
@@ -239,34 +247,17 @@ fn start_recording(mode: RecordingMode) {
     let Some(state) = app.try_state::<PipelineState>() else {
         return;
     };
-    // #region agent log
-    crate::agent_debug_log(
-        "D",
-        "hotkeys.rs:start_recording:enter",
-        "hotkey start_recording",
-        serde_json::json!({ "mode": format!("{:?}", mode) }),
-    );
-    // #endregion
-    if let Ok(snap) = state.start_with_mode(mode) {
-        // #region agent log
-        crate::agent_debug_log(
-            "D",
-            "hotkeys.rs:start_recording:started",
-            "pipeline start ok, syncing overlay",
-            serde_json::json!({ "status": format!("{:?}", snap.status) }),
-        );
-        // #endregion
-        overlay::play_cue(overlay::CueKind::Start);
-        let _ = app.emit("dictation://status", &snap);
-        overlay::sync_overlay(app, &snap);
-        // #region agent log
-        crate::agent_debug_log(
-            "D",
-            "hotkeys.rs:start_recording:done",
-            "start_recording finished",
-            serde_json::json!({}),
-        );
-        // #endregion
+    match state.start_with_mode(mode) {
+        Ok(snap) => {
+            overlay::play_cue(overlay::CueKind::Start);
+            let _ = app.emit("dictation://status", &snap);
+            overlay::sync_overlay(app, &snap);
+        }
+        Err(_) => {
+            // Chord was latched before start — reset so the next press can Start again.
+            reset_chord_mode();
+            overlay::play_cue(overlay::CueKind::Fail);
+        }
     }
 }
 
@@ -277,28 +268,12 @@ fn stop_recording() {
     let Some(state) = app.try_state::<PipelineState>() else {
         return;
     };
-    // #region agent log
-    crate::agent_debug_log(
-        "E",
-        "hotkeys.rs:stop_recording:enter",
-        "hotkey stop_recording",
-        serde_json::json!({
-            "thread": format!("{:?}", std::thread::current().id()),
-        }),
-    );
-    // #endregion
     let result = state.stop_and_process(app.clone());
-    // #region agent log
-    crate::agent_debug_log(
-        "E",
-        "hotkeys.rs:stop_recording:done",
-        "stop_and_process returned",
-        serde_json::json!({
-            "ok": result.is_ok(),
-            "err": result.as_ref().err().map(|e| e.to_string()),
-        }),
-    );
-    // #endregion
+    if result.is_err() {
+        // Desync: chord thought we were recording. Unlock chord for the next Start.
+        reset_chord_mode();
+        overlay::play_cue(overlay::CueKind::Fail);
+    }
 }
 
 fn cancel_recording() {

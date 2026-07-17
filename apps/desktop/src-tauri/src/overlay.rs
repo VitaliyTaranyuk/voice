@@ -42,17 +42,6 @@ pub fn play_cue(kind: CueKind) {
 }
 
 pub fn sync_overlay(app: &AppHandle, snap: &SessionSnapshot) {
-    // #region agent log
-    crate::agent_debug_log(
-        "F",
-        "overlay.rs:sync_overlay:dispatch",
-        "scheduling sync_overlay on main thread",
-        serde_json::json!({
-            "status": format!("{:?}", snap.status),
-            "thread": format!("{:?}", std::thread::current().id()),
-        }),
-    );
-    // #endregion
     let app2 = app.clone();
     let snap = snap.clone();
     // Window show/hide/size must run on the UI thread — calling from tokio deadlocks on Windows.
@@ -62,27 +51,7 @@ pub fn sync_overlay(app: &AppHandle, snap: &SessionSnapshot) {
 }
 
 fn sync_overlay_on_main(app: &AppHandle, snap: &SessionSnapshot) {
-    // #region agent log
-    let t0 = std::time::Instant::now();
-    crate::agent_debug_log(
-        "A",
-        "overlay.rs:sync_overlay:enter",
-        "sync_overlay enter",
-        serde_json::json!({
-            "status": format!("{:?}", snap.status),
-            "thread": format!("{:?}", std::thread::current().id()),
-        }),
-    );
-    // #endregion
     let Some(window) = app.get_webview_window("overlay") else {
-        // #region agent log
-        crate::agent_debug_log(
-            "A",
-            "overlay.rs:sync_overlay:no_window",
-            "overlay window missing",
-            serde_json::json!({ "elapsedMs": t0.elapsed().as_millis() as u64 }),
-        );
-        // #endregion
         return;
     };
 
@@ -100,44 +69,14 @@ fn sync_overlay_on_main(app: &AppHandle, snap: &SessionSnapshot) {
             if matches!(snap.status, DictationStatus::Failed) {
                 play_cue(CueKind::Fail);
             }
-            // #region agent log
-            crate::agent_debug_log(
-                "A",
-                "overlay.rs:sync_overlay:before_show",
-                "about to position+show",
-                serde_json::json!({
-                    "elapsedMs": t0.elapsed().as_millis() as u64,
-                    "thread": format!("{:?}", std::thread::current().id()),
-                }),
-            );
-            // #endregion
             position_bottom_center(&window);
             show_without_activate(&window);
-            // #region agent log
-            crate::agent_debug_log(
-                "A",
-                "overlay.rs:sync_overlay:after_show",
-                "position+show done",
-                serde_json::json!({ "elapsedMs": t0.elapsed().as_millis() as u64 }),
-            );
-            // #endregion
         }
         // Hide before paste so overlay never competes for focus/caret.
         DictationStatus::Injecting => {
             let _ = window.hide();
         }
     }
-    // #region agent log
-    crate::agent_debug_log(
-        "A",
-        "overlay.rs:sync_overlay:exit",
-        "sync_overlay exit",
-        serde_json::json!({
-            "status": format!("{:?}", snap.status),
-            "elapsedMs": t0.elapsed().as_millis() as u64,
-        }),
-    );
-    // #endregion
 }
 
 fn position_bottom_center(window: &WebviewWindow) {

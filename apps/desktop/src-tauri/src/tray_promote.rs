@@ -4,47 +4,16 @@
 #[cfg(windows)]
 pub fn promote_voice_tray_icon_async() {
     std::thread::spawn(|| {
-        // #region agent log
-        crate::agent_debug_log(
-            "D",
-            "tray_promote.rs:async:enter",
-            "tray promote worker started",
-            serde_json::json!({}),
-        );
-        // #endregion
         // NotifyIconSettings entry appears shortly after Shell_NotifyIcon.
         for delay_ms in [0_u64, 400, 1200, 3000] {
             if delay_ms > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             }
-            // #region agent log
-            let t0 = std::time::Instant::now();
-            // #endregion
             let found = promote_voice_tray_icon();
-            // #region agent log
-            crate::agent_debug_log(
-                "D",
-                "tray_promote.rs:async:attempt",
-                "tray promote attempt finished",
-                serde_json::json!({
-                    "delayMs": delay_ms,
-                    "found": found,
-                    "elapsedMs": t0.elapsed().as_millis() as u64,
-                }),
-            );
-            // #endregion
             if found {
                 break;
             }
         }
-        // #region agent log
-        crate::agent_debug_log(
-            "D",
-            "tray_promote.rs:async:exit",
-            "tray promote worker done",
-            serde_json::json!({}),
-        );
-        // #endregion
     });
 }
 
