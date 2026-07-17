@@ -14,7 +14,7 @@
 | Фаза | Статус |
 |------|--------|
 | M0 Foundation | **Done** — monorepo, contracts/sdk, FastAPI `/v1`, Tauri Windows shell + pipeline stub |
-| M1 Audio + Hotkey | Pending |
+| M1 Audio + Hotkey | **Done** — cpal WASAPI capture, Ctrl+Shift+Space PTT, live peak meter |
 | M2 ASR | Pending |
 | M3 Refine + Inject E2E | Pending (API refine stub ready; DeepSeek when `DEEPSEEK_API_KEY` set) |
 

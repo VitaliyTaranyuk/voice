@@ -51,11 +51,12 @@ pnpm --filter @voice/desktop exec tauri dev
 Опционально в `services/api/.env`:
 
 ```
-DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_API_KEY=sk-2b2b8d778a324c78b7b815725b82f06c
 ```
 
-## Статус M0
+## Статус
 
-Готово: monorepo, contracts/sdk, FastAPI health+refine, Tauri shell, state-machine stub диктовки.
-
-Далее (M1–M3): audio capture, hotkeys, ASR stream, injection, DeepSeek E2E.
+- **M0** Done — monorepo, contracts/sdk, FastAPI, Tauri shell
+- **M1** Done — mic capture (cpal) + PTT `Ctrl+Shift+Space`
+- **M2** Next — streaming ASR
+- **M3** Next — DeepSeek refine + text injection

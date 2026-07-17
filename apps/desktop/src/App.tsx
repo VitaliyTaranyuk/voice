@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { PrivacyMode } from '@voice/contracts';
 import { useSessionStore } from './store/session';
 import type { RuntimeInfo, SessionSnapshot } from './types';
@@ -35,6 +36,24 @@ export default function App() {
         setError(err instanceof Error ? err.message : String(err));
       }
     })();
+
+    let unlisten: (() => void) | undefined;
+    void listen<SessionSnapshot>('dictation://status', (event) => {
+      setSession(event.payload);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    const poll = window.setInterval(() => {
+      void invoke<SessionSnapshot>('get_session_status')
+        .then(setSession)
+        .catch(() => undefined);
+    }, 200);
+
+    return () => {
+      unlisten?.();
+      window.clearInterval(poll);
+    };
   }, [setError, setRuntime, setSession]);
 
   async function runCommand(command: 'start_dictation' | 'stop_dictation' | 'cancel_dictation') {
@@ -50,17 +69,21 @@ export default function App() {
     }
   }
 
+  const recording = session?.status === 'recording';
+  const peak = session?.audio?.peakAmplitude ?? 0;
+
   return (
     <div className="shell">
       <header className="hero">
         <p className="brand">Voice</p>
         <h1>Speak into any app</h1>
         <p className="lede">
-          Windows MVP shell. Hold a hotkey, speak, get polished text — powered by DeepSeek refine.
+          Hold <kbd>{runtime?.hotkey ?? session?.hotkey ?? 'Ctrl+Shift+Space'}</kbd> and speak.
+          Release to stop. DeepSeek refine comes next.
         </p>
       </header>
 
-      <section className="panel status-panel">
+      <section className={`panel status-panel ${recording ? 'recording' : ''}`}>
         <div className="row">
           <span className="label">Status</span>
           <span className={`badge status-${session?.status ?? 'idle'}`}>
@@ -68,6 +91,11 @@ export default function App() {
           </span>
         </div>
         <p className="message">{session?.message ?? 'Loading…'}</p>
+        {recording ? (
+          <div className="meter" aria-hidden>
+            <div className="meter-fill" style={{ width: `${Math.min(peak * 100, 100)}%` }} />
+          </div>
+        ) : null}
         {session?.sessionId ? (
           <p className="meta">Session {session.sessionId.slice(0, 8)}</p>
         ) : null}
@@ -77,15 +105,15 @@ export default function App() {
         <button
           type="button"
           className="btn primary"
-          disabled={busy || session?.status === 'recording'}
+          disabled={busy || recording}
           onClick={() => void runCommand('start_dictation')}
         >
-          Start (PTT stub)
+          Start
         </button>
         <button
           type="button"
           className="btn"
-          disabled={busy || session?.status !== 'recording'}
+          disabled={busy || !recording}
           onClick={() => void runCommand('stop_dictation')}
         >
           Stop
@@ -123,6 +151,10 @@ export default function App() {
         <h2>Runtime</h2>
         <dl>
           <div>
+            <dt>Hotkey</dt>
+            <dd>{runtime?.hotkey ?? '—'}</dd>
+          </div>
+          <div>
             <dt>Platform</dt>
             <dd>{runtime?.platform ?? '—'}</dd>
           </div>
@@ -139,7 +171,7 @@ export default function App() {
 
       {error ? <p className="error">{error}</p> : null}
 
-      <footer className="footer">M0 foundation · audio & injection arrive in M1–M3</footer>
+      <footer className="footer">M1 · mic + PTT · ASR streaming in M2</footer>
     </div>
   );
 }
