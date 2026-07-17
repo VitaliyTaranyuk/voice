@@ -8,6 +8,13 @@ export type CaptureStats = {
   peakAmplitude: number;
 };
 
+export type AppContext = {
+  appId: string;
+  appCategory: string;
+  windowTitle?: string | null;
+  processName?: string | null;
+};
+
 export type RuntimeInfo = {
   appName: string;
   version: string;
@@ -15,6 +22,7 @@ export type RuntimeInfo = {
   mvpTarget: string;
   llmProvider: string;
   hotkey: string;
+  apiBaseUrl: string;
 };
 
 export type SessionSnapshot = {
@@ -23,4 +31,17 @@ export type SessionSnapshot = {
   message: string;
   audio: CaptureStats | null;
   hotkey: string;
+  rawText?: string | null;
+  finalText?: string | null;
+  appContext?: AppContext | null;
+};
+
+export type HistoryItem = {
+  id: string;
+  sessionId: string;
+  text: string;
+  rawText?: string | null;
+  appId?: string | null;
+  createdAt: string;
+  favorite: boolean;
 };

@@ -58,6 +58,15 @@ export const RefineResponseSchema = z.object({
 });
 export type RefineResponse = z.infer<typeof RefineResponseSchema>;
 
+export const AsrResponseSchema = z.object({
+  text: z.string(),
+  language: z.string().optional().nullable(),
+  provider: z.enum(['openai_whisper', 'deepgram', 'passthrough']),
+  confidence: z.number().min(0).max(1).optional().nullable(),
+  warnings: z.array(z.string()).default([]),
+});
+export type AsrResponse = z.infer<typeof AsrResponseSchema>;
+
 export const DictationSessionStatusSchema = z.enum([
   'idle',
   'recording',

@@ -1,8 +1,10 @@
 import axios, { type AxiosInstance } from 'axios';
 import {
+  AsrResponseSchema,
   HealthResponseSchema,
   RefineRequestSchema,
   RefineResponseSchema,
+  type AsrResponse,
   type HealthResponse,
   type RefineRequest,
   type RefineResponse,
@@ -43,6 +45,17 @@ export class VoiceApiClient {
     const payload = RefineRequestSchema.parse(input);
     const { data } = await this.http.post<unknown>('/v1/ai/refine', payload);
     return RefineResponseSchema.parse(data);
+  }
+
+  async transcribe(file: Blob, locale = 'ru'): Promise<AsrResponse> {
+    const form = new FormData();
+    form.append('file', file, 'dictation.wav');
+    form.append('locale', locale);
+    const { data } = await this.http.post<unknown>('/v1/ai/asr', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120_000,
+    });
+    return AsrResponseSchema.parse(data);
   }
 }
 

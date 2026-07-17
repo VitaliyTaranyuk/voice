@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { PrivacyMode } from '@voice/contracts';
 import { useSessionStore } from './store/session';
-import type { RuntimeInfo, SessionSnapshot } from './types';
+import type { HistoryItem, RuntimeInfo, SessionSnapshot } from './types';
 
 const PRIVACY_LABELS: Record<PrivacyMode, string> = {
   local: 'Local',
@@ -16,14 +16,25 @@ export default function App() {
     runtime,
     session,
     privacyMode,
+    history,
     busy,
     error,
     setRuntime,
     setSession,
     setPrivacyMode,
+    setHistory,
     setBusy,
     setError,
   } = useSessionStore();
+
+  async function refreshHistory() {
+    try {
+      const items = await invoke<HistoryItem[]>('list_history');
+      setHistory(items);
+    } catch {
+      // history optional during early boot
+    }
+  }
 
   useEffect(() => {
     void (async () => {
@@ -32,6 +43,7 @@ export default function App() {
         const snap = await invoke<SessionSnapshot>('get_session_status');
         setRuntime(info);
         setSession(snap);
+        await refreshHistory();
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -40,6 +52,9 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     void listen<SessionSnapshot>('dictation://status', (event) => {
       setSession(event.payload);
+      if (event.payload.status === 'completed') {
+        void refreshHistory();
+      }
     }).then((fn) => {
       unlisten = fn;
     });
@@ -48,13 +63,14 @@ export default function App() {
       void invoke<SessionSnapshot>('get_session_status')
         .then(setSession)
         .catch(() => undefined);
-    }, 200);
+    }, 250);
 
     return () => {
       unlisten?.();
       window.clearInterval(poll);
     };
-  }, [setError, setRuntime, setSession]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function runCommand(command: 'start_dictation' | 'stop_dictation' | 'cancel_dictation') {
     setBusy(true);
@@ -78,8 +94,8 @@ export default function App() {
         <p className="brand">Voice</p>
         <h1>Speak into any app</h1>
         <p className="lede">
-          Hold <kbd>{runtime?.hotkey ?? session?.hotkey ?? 'Ctrl+Shift+Space'}</kbd> and speak.
-          Release to stop. DeepSeek refine comes next.
+          Focus a text field, hold <kbd>{runtime?.hotkey ?? 'Ctrl+Shift+Space'}</kbd>, speak,
+          release — text is transcribed, refined (DeepSeek), and pasted.
         </p>
       </header>
 
@@ -96,8 +112,12 @@ export default function App() {
             <div className="meter-fill" style={{ width: `${Math.min(peak * 100, 100)}%` }} />
           </div>
         ) : null}
-        {session?.sessionId ? (
-          <p className="meta">Session {session.sessionId.slice(0, 8)}</p>
+        {session?.finalText ? <p className="result">{session.finalText}</p> : null}
+        {session?.appContext?.processName ? (
+          <p className="meta">
+            Target {session.appContext.processName}
+            {session.appContext.appCategory ? ` · ${session.appContext.appCategory}` : ''}
+          </p>
         ) : null}
       </section>
 
@@ -143,20 +163,40 @@ export default function App() {
           ))}
         </div>
         <p className="hint">
-          Local keeps data on device. Cloud uses ASR + DeepSeek via API. Hybrid splits the path.
+          Cloud mode uses your local API at {runtime?.apiBaseUrl ?? 'http://127.0.0.1:8787'} for ASR
+          + DeepSeek.
         </p>
+      </section>
+
+      <section className="panel history-panel">
+        <div className="row">
+          <h2>History</h2>
+          <button type="button" className="btn ghost tiny" onClick={() => void refreshHistory()}>
+            Refresh
+          </button>
+        </div>
+        {history.length === 0 ? (
+          <p className="hint">No dictations yet.</p>
+        ) : (
+          <ul className="history-list">
+            {history.slice(0, 8).map((item) => (
+              <li key={item.id}>
+                <p>{item.text}</p>
+                <span>
+                  {item.appId ?? 'app'} · {new Date(item.createdAt).toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="panel meta-panel">
         <h2>Runtime</h2>
         <dl>
           <div>
-            <dt>Hotkey</dt>
-            <dd>{runtime?.hotkey ?? '—'}</dd>
-          </div>
-          <div>
-            <dt>Platform</dt>
-            <dd>{runtime?.platform ?? '—'}</dd>
+            <dt>API</dt>
+            <dd>{runtime?.apiBaseUrl ?? '—'}</dd>
           </div>
           <div>
             <dt>LLM</dt>
@@ -171,7 +211,9 @@ export default function App() {
 
       {error ? <p className="error">{error}</p> : null}
 
-      <footer className="footer">M1 · mic + PTT · ASR streaming in M2</footer>
+      <footer className="footer">
+        Start API with keys in services/api/.env · then dictate into any text field
+      </footer>
     </div>
   );
 }

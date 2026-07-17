@@ -1,34 +1,34 @@
 mod audio;
+mod cloud;
 mod commands;
+mod context;
+mod history;
+mod inject;
 mod pipeline;
+mod wav;
 
 use commands::{
-    cancel_dictation, get_runtime_info, get_session_status, ping, start_dictation, stop_dictation,
+    cancel_dictation, get_runtime_info, get_session_status, list_history, ping, start_dictation,
+    stop_dictation,
 };
+use history::HistoryStore;
 use pipeline::PipelineState;
-use tauri::{Emitter, Manager}; // Manager: try_state for PTT handler
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(PipelineState::default())
-        .invoke_handler(tauri::generate_handler![
-            ping,
-            get_runtime_info,
-            get_session_status,
-            start_dictation,
-            stop_dictation,
-            cancel_dictation
-        ])
         .setup(|app| {
+            let history = HistoryStore::open_default().map_err(|e| e.to_string())?;
+            app.manage(PipelineState::new(history));
+
             #[cfg(desktop)]
             {
                 use tauri_plugin_global_shortcut::{
                     Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
                 };
 
-                // PTT default: Ctrl+Shift+Space (Aqua-like hold-to-talk, low conflict on Windows).
                 let ptt = Shortcut::new(
                     Some(Modifiers::CONTROL | Modifiers::SHIFT),
                     Code::Space,
@@ -50,9 +50,7 @@ pub fn run() {
                                     }
                                 }
                                 ShortcutState::Released => {
-                                    if let Ok(snap) = state.stop() {
-                                        let _ = app.emit("dictation://status", snap);
-                                    }
+                                    let _ = state.stop_and_process(app.clone());
                                 }
                             }
                         })
@@ -63,6 +61,15 @@ pub fn run() {
             }
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            ping,
+            get_runtime_info,
+            get_session_status,
+            start_dictation,
+            stop_dictation,
+            cancel_dictation,
+            list_history
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Voice");
 }

@@ -155,7 +155,7 @@ impl MicCapture {
         })
     }
 
-    pub fn stop(&self) -> Result<CaptureStats, AudioError> {
+    pub fn stop(&self) -> Result<(CaptureStats, Vec<f32>, u32), AudioError> {
         if !self.is_active() {
             return Err(AudioError::NotCapturing);
         }
@@ -167,13 +167,15 @@ impl MicCapture {
 
         let mut guard = self.inner.lock().expect("audio mutex");
         let captured = guard.take().ok_or(AudioError::NotCapturing)?;
-        Ok(CaptureStats {
+        let stats = CaptureStats {
             sample_rate: captured.sample_rate,
             channels: captured.channels,
             frames: captured.samples.len(),
             duration_ms: captured.started_at.elapsed().as_millis() as u64,
             peak_amplitude: captured.peak,
-        })
+        };
+        let sample_rate = captured.sample_rate;
+        Ok((stats, captured.samples, sample_rate))
     }
 
     pub fn stats(&self) -> Option<CaptureStats> {
