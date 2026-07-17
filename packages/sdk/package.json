@@ -1,0 +1,27 @@
+{
+  "name": "@voice/sdk",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo \"lint:sdk ok\""
+  },
+  "dependencies": {
+    "@voice/contracts": "workspace:*",
+    "axios": "^1.10.0"
+  },
+  "devDependencies": {
+    "@voice/tsconfig": "workspace:*",
+    "typescript": "^5.8.3"
+  }
+}

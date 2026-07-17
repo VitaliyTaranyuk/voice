@@ -1,0 +1,27 @@
+[project]
+name = "voice-api"
+version = "0.0.1"
+description = "Voice cloud API — identity, billing stub, AI refine via DeepSeek"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.34.0",
+  "pydantic>=2.11.0",
+  "pydantic-settings>=2.9.0",
+  "httpx>=0.28.0",
+]
+
+[dependency-groups]
+dev = [
+  "ruff>=0.11.0",
+  "pyright>=1.1.400",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pyright]
+include = ["app"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
