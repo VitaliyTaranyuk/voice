@@ -1,0 +1,3 @@
+# Хуки исполняются через sh — с CRLF они падают с "\r: command not found".
+# core.autocrlf=true на Windows превратил бы их в CRLF без этого правила.
+.githooks/** text eol=lf
