@@ -1,4 +1,4 @@
-# Build Voice NSIS installer for friends: Setup.exe with the local API inside.
+﻿# Build Voice NSIS installer for friends: Setup.exe with the local API inside.
 #
 # No API keys are baked into the installer. Each recipient adds their own key in
 # Settings; it lands in their Windows Credential Manager and is handed to the API

@@ -1,4 +1,4 @@
-# DEV launcher only: API + tauri dev. Do NOT use as a product shortcut under load.
+﻿# DEV launcher only: API + tauri dev. Do NOT use as a product shortcut under load.
 # Prefer: one API terminal + one desktop terminal from Cursor.
 # Usage: pwsh scripts/start-voice.ps1
 

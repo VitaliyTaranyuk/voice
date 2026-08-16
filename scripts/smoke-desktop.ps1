@@ -1,4 +1,4 @@
-# Smoke gate for desktop changes — run before treating a UI/pipeline fix as done.
+﻿# Smoke gate for desktop changes — run before treating a UI/pipeline fix as done.
 # Usage: powershell -File scripts/smoke-desktop.ps1
 
 $ErrorActionPreference = "Stop"

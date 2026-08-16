@@ -1,4 +1,4 @@
-# Create/update Desktop shortcut Voice.lnk → scripts/start-voice.cmd
+﻿# Create/update Desktop shortcut Voice.lnk → scripts/start-voice.cmd
 # Usage: pwsh scripts/install-desktop-shortcut.ps1
 
 $ErrorActionPreference = "Stop"
