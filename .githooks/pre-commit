@@ -20,7 +20,8 @@ fail() {
 	echo ""
 	echo "$1"
 	echo ""
-	echo "Ключи хранятся только в services/api/.env (он в .gitignore)."
+	echo "Ключи хранятся в services/api/.env (разработка, файл в .gitignore)"
+	echo "и в Credential Manager Windows (пользователи приложения, окно Settings)."
 	echo "В коммит идут лишь имена переменных — см. services/api/.env.example."
 	echo ""
 	echo "Если это ложное срабатывание: git commit --no-verify"
@@ -28,7 +29,12 @@ fail() {
 }
 
 # 1. Файлы, которых в репозитории быть не должно ни при каких условиях.
-forbidden=$(echo "$staged" | grep -E '(^|/)(\.env|runtime\.env)(\.|$)|(^|/)\.env$|\.pem$|\.p12$|(^|/)id_(rsa|ed25519)$' || true)
+# Шаблоны отсеиваются первым grep-ом: `.env.example` и `runtime.env.example` —
+# именно то, что коммитить нужно, и без этого фильтра они попадали под правило.
+forbidden=$(echo "$staged" \
+	| grep -vE '\.(example|sample|template)$' \
+	| grep -E '(^|/)\.env($|\.)|(^|/)runtime\.env($|\.)|\.pem$|\.p12$|(^|/)id_(rsa|ed25519)$' \
+	|| true)
 if [ -n "$forbidden" ]; then
 	fail "Файлы с секретами:
 $forbidden"
