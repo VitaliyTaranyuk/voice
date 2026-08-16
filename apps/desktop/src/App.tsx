@@ -109,6 +109,20 @@ function IconAlert({ size = 16 }: { size?: number }) {
   );
 }
 
+function IconSettings({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="3.25" stroke="currentColor" strokeWidth="1.75" />
+      <path
+        d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M18 6l-1.6 1.6M7.6 16.4 6 18M18 18l-1.6-1.6M7.6 7.6 6 6"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function IconCopy({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -161,6 +175,21 @@ export default function App() {
       const win = await WebviewWindow.getByLabel('history');
       if (!win) {
         setError('History window unavailable');
+        return;
+      }
+      await win.show();
+      await win.setFocus();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function openSettings() {
+    try {
+      const win = await WebviewWindow.getByLabel('settings');
+      if (!win) {
+        setError('Settings window unavailable');
         return;
       }
       await win.show();
@@ -356,6 +385,10 @@ export default function App() {
           <button type="button" className="btn-quiet" onClick={() => void openHistory()}>
             <IconHistory />
             History
+          </button>
+          <button type="button" className="btn-quiet" onClick={() => void openSettings()}>
+            <IconSettings />
+            Settings
           </button>
         </div>
       </main>

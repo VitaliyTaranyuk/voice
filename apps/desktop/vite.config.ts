@@ -18,6 +18,7 @@ export default defineConfig(async () => ({
         main: resolve(rootDir, "index.html"),
         overlay: resolve(rootDir, "overlay.html"),
         history: resolve(rootDir, "history.html"),
+        settings: resolve(rootDir, "settings.html"),
       },
     },
   },

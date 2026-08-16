@@ -56,6 +56,22 @@
         "transparent": false,
         "shadow": true,
         "skipTaskbar": false
+      },
+      {
+        "label": "settings",
+        "title": "Voice Settings",
+        "url": "settings.html",
+        "width": 460,
+        "height": 560,
+        "resizable": true,
+        "minWidth": 380,
+        "minHeight": 420,
+        "center": true,
+        "visible": false,
+        "decorations": false,
+        "transparent": false,
+        "shadow": true,
+        "skipTaskbar": false
       }
     ],
     "security": {
@@ -64,10 +80,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": ["nsis"],
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "both",
+        "languages": ["English", "Russian"],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "Voice"
       }
     },
     "icon": [

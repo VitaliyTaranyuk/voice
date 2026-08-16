@@ -9,12 +9,14 @@ mod inject;
 mod input_target;
 mod overlay;
 mod pipeline;
+mod secrets;
 mod tray_promote;
 mod wav;
 
 use commands::{
-    cancel_dictation, check_api_health, copy_last_history, copy_text, get_runtime_info,
-    get_session_status, list_history, ping, start_dictation, stop_dictation,
+    api_key_status, cancel_dictation, check_api_health, clear_api_key, copy_last_history, copy_text,
+    get_runtime_info, get_session_status, list_history, ping, set_api_key, start_dictation,
+    stop_dictation,
 };
 use history::HistoryStore;
 use pipeline::PipelineState;
@@ -176,7 +178,8 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 hotkeys::start(app.handle().clone());
-                api_boot::ensure_local_api_in_background();
+                let resource_dir = app.path().resource_dir().ok();
+                api_boot::ensure_local_api_in_background(resource_dir);
             }
 
             // Always-on dormant orb so presence is visible before first hotkey.
@@ -197,8 +200,16 @@ pub fn run() {
             list_history,
             copy_text,
             copy_last_history,
-            check_api_health
+            check_api_health,
+            api_key_status,
+            set_api_key,
+            clear_api_key
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Voice");
+        .build(tauri::generate_context!())
+        .expect("error while building Voice")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                api_boot::shutdown_local_api();
+            }
+        });
 }
