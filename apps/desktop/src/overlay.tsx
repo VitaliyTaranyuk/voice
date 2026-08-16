@@ -115,17 +115,19 @@ function OverlayApp() {
       smoothedRef.current = next < 0.003 ? 0 : next;
       const level = recordingRef.current ? smoothedRef.current : 0;
 
-      const waves = waveStylesForLevel(level);
-      for (let i = 0; i < 3; i += 1) {
+      // Итерируем сам кортеж: длина берётся из данных, а не дублируется константой,
+      // и элемент приходит типизированным (при индексации по number
+      // noUncheckedIndexedAccess дал бы WaveStyle | undefined).
+      waveStylesForLevel(level).forEach((wave, i) => {
         const el = waveRefs.current[i];
-        if (!el) continue;
+        if (!el) return;
         if (!recordingRef.current) {
           el.style.opacity = '0';
-          continue;
+          return;
         }
-        el.style.transform = waves[i].transform;
-        el.style.opacity = String(waves[i].opacity);
-      }
+        el.style.transform = wave.transform;
+        el.style.opacity = String(wave.opacity);
+      });
 
       // Dormant uses CSS defaults; recording glow follows voice energy.
       const orb = orbRef.current;
