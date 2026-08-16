@@ -1,4 +1,4 @@
-# Start Voice API then print ready message.
+﻿# Start Voice API then print ready message.
 # Usage: pwsh scripts/dev-api.ps1
 
 $ErrorActionPreference = "Stop"
