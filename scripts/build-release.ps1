@@ -28,11 +28,14 @@ function Write-RuntimeEnv([string]$Dir) {
   # Non-secret defaults only. API keys arrive as environment variables from the
   # desktop app, which reads them from the Credential Manager at spawn time, and
   # pydantic-settings ranks those above this file.
+  # device=cpu, а не auto: CUDA в сайдкар намеренно не входит (см. voice_api.spec),
+  # и с auto каждый старт начинался бы с заведомо неудачной попытки поднять модель
+  # на GPU. Результат тот же, но без лишней задержки и пугающей строки в логе.
   $lines = @(
     "ASR_PROVIDER=local",
     "LOCAL_WHISPER_MODEL=small",
-    "LOCAL_WHISPER_DEVICE=auto",
-    "LOCAL_WHISPER_COMPUTE_TYPE=float16"
+    "LOCAL_WHISPER_DEVICE=cpu",
+    "LOCAL_WHISPER_COMPUTE_TYPE=int8"
   )
   $path = Join-Path $Dir "runtime.env"
   Set-Content -Path $path -Value $lines -Encoding UTF8

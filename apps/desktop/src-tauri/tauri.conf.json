@@ -81,6 +81,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "resources": ["resources/voice-api/**/*"],
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
