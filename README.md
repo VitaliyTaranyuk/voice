@@ -56,6 +56,25 @@ pnpm --filter @voice/desktop exec tauri dev
 
 Опционально: `VOICE_API_BASE_URL=http://127.0.0.1:8787` (это default).
 
+## Секреты
+
+Ключи живут **только** в `services/api/.env` — он в `.gitignore` и не коммитится.
+В репозиторий попадают лишь имена переменных (`services/api/.env.example`).
+Реальное значение ключа не должно появляться нигде в репозитории, включая README
+и примеры команд: 17.07.2026 `DEEPSEEK_API_KEY` уехал в публичный README именно
+так и провисел месяц.
+
+Один раз в каждом клоне включите pre-commit-проверку:
+
+```powershell
+git config core.hooksPath .githooks
+```
+
+Хук блокирует коммит, если в staged-изменениях появился ключ или файл `.env`.
+Работает без дополнительных установок; если в системе есть `gitleaks`, использует
+его. На стороне GitHub то же самое ловит push protection — он включён и сработает,
+даже если хук в клоне не настроен.
+
 ASR по умолчанию: локальный `faster-whisper` `small` на CUDA (`ASR_PROVIDER=local` в `services/api/.env`) — быстрее `large-v3`. Качество: `medium` / `large-v3`. DeepSeek refine **включён** на hot path (пунктуация, fillers); отключить: `VOICE_SKIP_REFINE=1`. Тишина / только «аммм» не вставляются.
 
 ### Как пользоваться

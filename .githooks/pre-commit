@@ -1,0 +1,65 @@
+#!/bin/sh
+# Не даёт секрету попасть в коммит.
+#
+# Зачем: 17.07.2026 реальный DEEPSEEK_API_KEY уехал в публичный README и провисел
+# там месяц до внешнего сообщения. .gitignore документацию не защищает и не должен —
+# нужна проверка содержимого, а не имени файла.
+#
+# Установка (один раз в клоне):  git config core.hooksPath .githooks
+# Обход в исключительном случае: git commit --no-verify
+#
+# Второй эшелон — GitHub push protection на репозитории: он ловит то же самое
+# на пуше, даже если хук не установлен.
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+fail() {
+	echo ""
+	echo "pre-commit: коммит остановлен — похоже на секрет в staged-изменениях."
+	echo ""
+	echo "$1"
+	echo ""
+	echo "Ключи хранятся только в services/api/.env (он в .gitignore)."
+	echo "В коммит идут лишь имена переменных — см. services/api/.env.example."
+	echo ""
+	echo "Если это ложное срабатывание: git commit --no-verify"
+	exit 1
+}
+
+# 1. Файлы, которых в репозитории быть не должно ни при каких условиях.
+forbidden=$(echo "$staged" | grep -E '(^|/)(\.env|runtime\.env)(\.|$)|(^|/)\.env$|\.pem$|\.p12$|(^|/)id_(rsa|ed25519)$' || true)
+if [ -n "$forbidden" ]; then
+	fail "Файлы с секретами:
+$forbidden"
+fi
+
+# 2. Содержимое добавленных строк.
+# Локфайлы и *.example исключены: там законно живут длинные хеши и пустые плейсхолдеры.
+added=$(git diff --cached -U0 --diff-filter=ACM -- \
+	':(exclude)*.lock' \
+	':(exclude)pnpm-lock.yaml' \
+	':(exclude)*.example' \
+	| grep '^+' | grep -v '^+++' || true)
+[ -z "$added" ] && exit 0
+
+if command -v gitleaks >/dev/null 2>&1; then
+	# gitleaks установлен — используем его, он точнее.
+	if ! gitleaks protect --staged --redact --no-banner; then
+		fail "Найдено gitleaks (значения в его выводе выше скрыты)."
+	fi
+	exit 0
+fi
+
+# gitleaks не установлен — встроенная проверка, чтобы защита работала всегда,
+# а не только на настроенной машине. Паттерны сужены под провайдеров этого
+# проекта, поэтому ложных срабатываний практически нет.
+patterns='sk-[A-Za-z0-9]{20,}|gsk_[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AIza[A-Za-z0-9_-]{30,}|xox[baprs]-[A-Za-z0-9-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(DEEPSEEK|GROQ|OPENAI|DEEPGRAM)_API_KEY[[:space:]]*[=:][[:space:]]*[^A-Za-z0-9_-]?[A-Za-z0-9_-]{20,}'
+
+hits=$(echo "$added" | grep -E "$patterns" | sed -E 's/(sk-|gsk_|gh[pousr]_|AIza|xox[baprs]-)[A-Za-z0-9_-]*/\1***/g' || true)
+if [ -n "$hits" ]; then
+	fail "Совпадения (значения скрыты):
+$hits"
+fi
+
+exit 0
