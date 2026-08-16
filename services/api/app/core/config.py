@@ -1,8 +1,28 @@
+import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _env_files() -> tuple[str, ...]:
+    """runtime.env (release sidecar) → VOICE_ENV_FILE → .env (dev)."""
+    found: list[str] = []
+    override = os.environ.get("VOICE_ENV_FILE", "").strip()
+    if override and Path(override).is_file():
+        found.append(override)
+    for name in ("runtime.env", ".env"):
+        path = Path(name)
+        if path.is_file() and str(path.resolve()) not in {str(Path(f).resolve()) for f in found}:
+            found.append(str(path))
+    return tuple(found) if found else (".env",)
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=_env_files(),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     app_name: str = "voice-api"
     app_version: str = "0.1.0"
@@ -35,3 +55,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+

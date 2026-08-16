@@ -23,6 +23,13 @@ __pycache__/
 .env
 .env.*
 !.env.example
+services/api/runtime.env
+dist/voice-sidecar/
+dist/voice-release/
+apps/desktop/src-tauri/resources/voice-api/**
+!apps/desktop/src-tauri/resources/voice-api/.gitkeep
+services/api/build/
+services/api/dist/
 
 # IDE / OS
 .idea/

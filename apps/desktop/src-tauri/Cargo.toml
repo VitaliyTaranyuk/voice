@@ -28,6 +28,11 @@ enigo = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "6"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Windows Credential Manager: the user supplies API keys, so none ship in the installer.
+# A crate rather than hand-rolled CredWriteW via `windows` — credential storage is not
+# where to write bespoke unsafe FFI with manual CREDENTIALW layout and wide strings.
+# The default `v1` feature already pulls in windows-native-keyring-store.
+keyring = "4"
 windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",

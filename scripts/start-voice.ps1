@@ -67,7 +67,10 @@ try {
   function Test-ApiHealthy {
     try {
       $res = Invoke-WebRequest -Uri "http://127.0.0.1:8787/v1/health" -UseBasicParsing -TimeoutSec 2
-      return $res.StatusCode -eq 200
+      if ($res.StatusCode -ne 200) { return $false }
+      $json = $res.Content | ConvertFrom-Json
+      # Reject foreign listeners (e.g. voice-cloud-gateway) that answer /health but require auth.
+      return $json.service -eq "voice-api"
     } catch {
       return $false
     }
@@ -129,7 +132,18 @@ uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8787
       Start-Sleep -Milliseconds 500
     }
   } else {
-    Write-Host "API already running"
+    Write-Host "Local voice-api already running on :8787"
+  }
+
+  # If something else owns :8787, warn — health check above already treats it as down.
+  try {
+    $probe = Invoke-WebRequest -Uri "http://127.0.0.1:8787/v1/health" -UseBasicParsing -TimeoutSec 2
+    $probeJson = $probe.Content | ConvertFrom-Json
+    if ($probeJson.service -and $probeJson.service -ne "voice-api") {
+      Write-Warning "Port 8787 is $($probeJson.service), not voice-api. Stop it or set VOICE_API_KEY before dictating."
+    }
+  } catch {
+    # ignore — API may still be starting
   }
 
   # --- Desktop ---

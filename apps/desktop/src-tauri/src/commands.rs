@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::history::HistoryItem;
 use crate::pipeline::{PipelineState, SessionSnapshot};
@@ -98,4 +98,65 @@ pub fn copy_last_history(state: State<'_, PipelineState>) -> Result<String, Stri
 #[tauri::command]
 pub async fn check_api_health(state: State<'_, PipelineState>) -> Result<bool, String> {
     state.check_api_health().await.map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeyStatus {
+    pub provider: String,
+    pub configured: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeySaveResult {
+    pub keys: Vec<ApiKeyStatus>,
+    /// What actually happened after storing the key. Always set: the restart is
+    /// asynchronous, so an empty notice would let the window imply "already live"
+    /// when the API is still coming back up.
+    pub notice: Option<String>,
+}
+
+fn api_key_statuses() -> Vec<ApiKeyStatus> {
+    crate::secrets::PROVIDERS
+        .iter()
+        .map(|provider| ApiKeyStatus {
+            provider: (*provider).to_string(),
+            configured: crate::secrets::is_configured(provider),
+        })
+        .collect()
+}
+
+/// Restart the API and say plainly what state the key is in.
+fn applied(app: &AppHandle) -> ApiKeySaveResult {
+    let notice = match crate::api_boot::restart_local_api(app.path().resource_dir().ok()) {
+        Ok(()) => Some("Saved — restarting the local API to apply it.".to_string()),
+        Err(e) => Some(format!("Saved, but not applied yet: {e}")),
+    };
+    ApiKeySaveResult {
+        keys: api_key_statuses(),
+        notice,
+    }
+}
+
+/// Configured / not configured only. Key values never cross this boundary.
+#[tauri::command]
+pub fn api_key_status() -> Vec<ApiKeyStatus> {
+    api_key_statuses()
+}
+
+#[tauri::command]
+pub fn set_api_key(
+    app: AppHandle,
+    provider: String,
+    key: String,
+) -> Result<ApiKeySaveResult, String> {
+    crate::secrets::set(&provider, &key)?;
+    Ok(applied(&app))
+}
+
+#[tauri::command]
+pub fn clear_api_key(app: AppHandle, provider: String) -> Result<ApiKeySaveResult, String> {
+    crate::secrets::clear(&provider)?;
+    Ok(applied(&app))
 }
