@@ -155,28 +155,6 @@ export default function App() {
 
   function applySession(snap: SessionSnapshot) {
     setSession(snap);
-    // #region agent log
-    if (snap.status === 'failed' || snap.status === 'completed' || snap.status === 'cancelled') {
-      fetch('http://127.0.0.1:7939/ingest/050a06a5-a099-42ad-ae94-c0037a6563b5', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'eae7db' },
-        body: JSON.stringify({
-          sessionId: 'eae7db',
-          hypothesisId: 'A',
-          location: 'App.tsx:applySession',
-          message: 'terminal_status',
-          data: {
-            status: snap.status,
-            message: snap.message,
-            canInsert: snap.canInsert,
-            hasFinalText: Boolean(snap.finalText?.trim()),
-            apiOnline,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-    }
-    // #endregion
     const text = snap.finalText?.trim();
     if (text) {
       setLastText(text);
