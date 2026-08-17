@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
-    "lint": "echo \"lint:desktop ok\""
+    "lint": "oxlint --deny-warnings src"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
