@@ -102,6 +102,23 @@ Write-Host "==> 2/3 tauri NSIS (bundles resources/voice-api, no keys)"
 Set-Location $root
 pnpm install
 pnpm --filter @voice/contracts --filter @voice/domain-types --filter @voice/sdk build
+
+# Build-machine paths should not travel inside a binary handed to other people.
+# Rust bakes source paths into panic metadata and debug info: the 0.1.2 build
+# carried 780 occurrences of the developer's cargo registry path, so the account
+# name was readable in the exe. Not a secret, but no reason to ship it.
+#
+# Computed here rather than pinned in .cargo/config.toml, because a config file
+# would have to spell out one machine's absolute paths — hardcoding the very
+# username this removes, and silently doing nothing on any other machine.
+# Diagnostics survive: file names and line numbers stay, only the prefix changes.
+$cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $HOME ".cargo" }
+$env:RUSTFLAGS = @(
+  "--remap-path-prefix=$(Join-Path $cargoHome 'registry\src')=/cargo/registry"
+  "--remap-path-prefix=${root}=/voice"
+) -join " "
+Write-Host "Remapping build paths out of the binary"
+
 pnpm --filter @voice/desktop exec tauri build --bundles nsis
 
 # Version drives artifact selection: the bundle directory accumulates installers
