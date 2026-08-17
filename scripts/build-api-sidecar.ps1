@@ -42,5 +42,14 @@ if (Test-Path $resourceDir) {
 New-Item -ItemType Directory -Path (Split-Path $resourceDir -Parent) -Force | Out-Null
 Copy-Item -Recurse (Join-Path $outRoot "voice-api") $resourceDir
 
+# The wipe above takes .gitkeep with it, and that file is the only reason the
+# directory exists in git at all. Without it `bundle.resources` matches nothing
+# on a clean checkout and the Tauri build script fails outright — which is how a
+# `git add -A` after a local build silently broke CI once. Put it back.
+$keep = Join-Path $resourceDir ".gitkeep"
+Set-Content -Path $keep -Encoding UTF8 -Value @(
+  "# Replaced by scripts/build-api-sidecar.ps1 before release. Placeholder so tauri.conf resources path exists."
+)
+
 Write-Host "OK: $(Join-Path $outRoot 'voice-api\voice-api.exe')"
 Write-Host "OK: $resourceDir\voice-api.exe"
