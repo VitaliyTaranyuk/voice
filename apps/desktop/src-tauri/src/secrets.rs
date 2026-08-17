@@ -10,7 +10,9 @@
 
 use keyring::{Entry, Error as KeyringError};
 
-/// Credential Manager service name; entries show up as `Voice/<env var>`.
+/// Credential Manager service name. keyring composes the target as
+/// `<user>.<service>`, so entries appear as `DEEPSEEK_API_KEY.Voice` — measured
+/// against a live entry, not assumed from the argument order.
 const SERVICE: &str = "Voice";
 
 /// Providers whose keys the app can store. Doubles as an allowlist: `provider`
