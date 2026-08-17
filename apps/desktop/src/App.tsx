@@ -400,9 +400,9 @@ export default function App() {
         </div>
       ) : null}
 
-      {update.stage.kind === 'installed' ? (
+      {update.stage.kind === 'installing' ? (
         <div className="banner update" role="status">
-          <span>Installed {update.stage.version} — restarting</span>
+          <span>Installing {update.stage.version} — Voice will restart</span>
         </div>
       ) : null}
 

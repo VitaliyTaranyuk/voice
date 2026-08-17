@@ -100,6 +100,23 @@ pub async fn check_api_health(state: State<'_, PipelineState>) -> Result<bool, S
     state.check_api_health().await.map_err(|e| e.to_string())
 }
 
+/// Stop the local API before the updater hands control to the NSIS installer.
+///
+/// The Windows updater ends in `std::process::exit(0)` immediately after
+/// launching the installer (`tauri-plugin-updater`, `updater.rs::install_inner`),
+/// so the `RunEvent::Exit` handler that normally stops the sidecar never runs.
+/// Without this the sidecar outlives the app, keeps
+/// `resources\voice-api\_internal\*.pyd` open, and the installer stops on
+/// "Can't write to file".
+///
+/// The installer kills the sidecar too (`nsis-hooks.nsh`), and that is what
+/// rescues apps already installed without this command. It is a backstop for
+/// installs the app knows nothing about, not a licence to leak our own child.
+#[tauri::command]
+pub fn stop_local_api(app: AppHandle) {
+    crate::api_boot::shutdown_local_api(app.path().resource_dir().ok().as_deref());
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiKeyStatus {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { relaunch } from '@tauri-apps/plugin-process';
+import { invoke } from '@tauri-apps/api/core';
 import { check, type Update } from '@tauri-apps/plugin-updater';
 
 /**
@@ -11,7 +11,7 @@ export type UpdateStage =
   | { kind: 'idle' }
   | { kind: 'available'; version: string }
   | { kind: 'downloading'; version: string; percent: number | null }
-  | { kind: 'installed'; version: string }
+  | { kind: 'installing'; version: string }
   | { kind: 'failed'; message: string };
 
 export function useUpdate() {
@@ -45,7 +45,10 @@ export function useUpdate() {
     let total = 0;
     let received = 0;
     try {
-      await update.downloadAndInstall((event) => {
+      // Download and install are two calls rather than downloadAndInstall(), so
+      // that stopping the API happens between them: dictation keeps working for
+      // the whole download, and a download that fails leaves nothing to restore.
+      await update.download((event) => {
         if (event.event === 'Started') {
           total = event.data.contentLength ?? 0;
           received = 0;
@@ -60,8 +63,17 @@ export function useUpdate() {
           percent: total > 0 ? Math.min(100, Math.round((received / total) * 100)) : null,
         });
       });
-      setStage({ kind: 'installed', version: update.version });
-      await relaunch();
+
+      // The sidecar holds resources\voice-api\_internal\*.pyd open and NSIS
+      // cannot overwrite a file in use — that is how the 0.1.3 update stopped
+      // halfway, with the main binary replaced and the sidecar left at 0.1.2.
+      await invoke('stop_local_api');
+
+      setStage({ kind: 'installing', version: update.version });
+      // Nothing after this line runs. install() launches the installer and ends
+      // the process with exit(0); the installer starts Voice again itself,
+      // because installMode "passive" passes it /R.
+      await update.install();
     } catch (err) {
       // Here the user did ask, so the failure has to be visible.
       setStage({ kind: 'failed', message: err instanceof Error ? err.message : String(err) });
