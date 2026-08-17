@@ -1,6 +1,6 @@
 [package]
 name = "voice-desktop"
-version = "0.1.2"
+version = "0.1.3"
 description = "Voice — AI voice input assistant for Windows"
 authors = ["Voice"]
 edition = "2021"
