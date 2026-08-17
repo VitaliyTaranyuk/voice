@@ -70,6 +70,21 @@ build hangs instead of failing.
   Write-Host "Signing password read from $passFile"
 }
 
+# A running instance holds resources\voice-api\voice-api.exe and its DLLs open, so
+# the build dies deep inside tauri-build with `os error 32` — a locked-file error
+# buried in compiler output, in the OS language, naming a DLL rather than the
+# cause. Ten minutes of compilation are wasted before it shows up. Cheaper here.
+$busy = @(Get-Process -Name "voice-desktop", "voice-api" -ErrorAction SilentlyContinue)
+if ($busy.Count -gt 0) {
+  $list = ($busy | ForEach-Object { "$($_.ProcessName) (pid $($_.Id))" }) -join ", "
+  throw @"
+Voice is running and holds the sidecar files open: $list
+
+Close it first. The build cannot overwrite resources\voice-api while those files
+are in use, and the error it fails with names a DLL, not the reason.
+"@
+}
+
 function Write-RuntimeEnv([string]$Dir) {
   if (-not (Test-Path $Dir)) {
     throw "Sidecar dir missing: $Dir"
