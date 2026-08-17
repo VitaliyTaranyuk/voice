@@ -478,25 +478,19 @@ where
                 .await
                 .map_err(|e| format!("inject join error: {e}"))?;
             if let Err(err) = inject_result {
-                let _ = save_history(&final_text, &raw);
+                // On this path the text was NOT inserted, so history is the only
+                // copy left. Claiming it was saved without checking would tell the
+                // user their words are safe at the exact moment they were lost.
+                let fate = describe_fate(save_history(&final_text, &raw), &final_text);
                 if !can_insert {
-                    return Err(format!(
-                        "No active text field — saved to history: {}",
-                        truncate(&final_text, 60)
-                    ));
+                    return Err(format!("No active text field — {fate}"));
                 }
-                return Err(format!(
-                    "Insert failed ({err}) — saved to history: {}",
-                    truncate(&final_text, 60)
-                ));
+                return Err(format!("Insert failed ({err}) — {fate}"));
             }
         }
         None => {
-            let _ = save_history(&final_text, &raw);
-            return Err(format!(
-                "No capture target — saved to history: {}",
-                truncate(&final_text, 60)
-            ));
+            let fate = describe_fate(save_history(&final_text, &raw), &final_text);
+            return Err(format!("No capture target — {fate}"));
         }
     }
 
@@ -577,6 +571,22 @@ fn message_for(
             .unwrap_or_else(|| "Done".into()),
         DictationStatus::Failed => "Failed".into(),
         DictationStatus::Cancelled => "Cancelled".into(),
+    }
+}
+
+/// What became of the text once inserting it failed.
+///
+/// Both branches carry the text itself, not only its fate: when nothing could be
+/// stored, the message is the last place the user can still read — and copy —
+/// what they said.
+fn describe_fate(saved: bool, final_text: &str) -> String {
+    if saved {
+        format!("saved to history: {}", truncate(final_text, 60))
+    } else {
+        format!(
+            "and history could not be written either, so this text exists nowhere else: {}",
+            truncate(final_text, 60)
+        )
     }
 }
 
@@ -707,3 +717,43 @@ impl std::fmt::Display for PipelineError {
 }
 
 impl std::error::Error for PipelineError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bug this guards against: the message promised "saved to history"
+    /// whether or not the write succeeded. On the failure path the text is not
+    /// inserted either, so the user was told their words were safe at the moment
+    /// they were lost.
+    #[test]
+    fn failed_history_is_not_reported_as_saved() {
+        let fate = describe_fate(false, "hello world");
+        assert!(
+            !fate.contains("saved to history"),
+            "a failed write must not claim the text was saved: {fate}"
+        );
+        assert!(
+            fate.contains("nowhere else"),
+            "the user has to be told the text is gone: {fate}"
+        );
+    }
+
+    #[test]
+    fn successful_history_says_so() {
+        let fate = describe_fate(true, "hello world");
+        assert!(fate.contains("saved to history"), "{fate}");
+    }
+
+    /// Either way the text travels with the message — it is the last copy the
+    /// user can still read and copy out.
+    #[test]
+    fn both_outcomes_carry_the_text() {
+        for saved in [true, false] {
+            assert!(
+                describe_fate(saved, "hello world").contains("hello world"),
+                "saved={saved}"
+            );
+        }
+    }
+}
