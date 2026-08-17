@@ -59,7 +59,7 @@ pub fn restart_local_api(resource_dir: Option<PathBuf>) -> Result<(), String> {
     }
 
     tauri::async_runtime::spawn(async move {
-        shutdown_local_api();
+        shutdown_local_api(resource_dir.as_deref());
 
         // Wait for the port to free up: a new process cannot bind 8787 while the
         // old one still holds it, and the API would simply fail to come back.
@@ -79,14 +79,109 @@ pub fn restart_local_api(resource_dir: Option<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
-pub fn shutdown_local_api() {
-    let Ok(mut guard) = API_CHILD.lock() else {
+/// Stop the local API: the child this process owns, plus any sidecar left behind
+/// by an earlier run.
+pub fn shutdown_local_api(resource_dir: Option<&Path>) {
+    if let Ok(mut guard) = API_CHILD.lock() {
+        if let Some(mut child) = guard.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+    kill_stale_sidecar(resource_dir);
+}
+
+/// Terminate a `voice-api.exe` this process never spawned.
+///
+/// Not an exotic case — it is the usual one right after an update. The installer
+/// relaunches Voice, `ensure_local_api_in_background` finds port 8787 already
+/// answering and deliberately does not start a second sidecar, so `API_CHILD`
+/// stays `None` while the previous run's `voice-api.exe` goes on holding
+/// `resources\voice-api\_internal\*.pyd` open. Killing only the owned child would
+/// therefore have left the 0.1.3 update failing exactly as it did: an orphan
+/// (measured: pid 17620, parent long dead, still listening on 8787) reproduces
+/// itself across every restart and blocks both the installer and local builds.
+///
+/// Scoped to the executable we would have spawned ourselves, compared by full
+/// path. A `voice-api.exe` from another installation is not ours to kill, and
+/// matching on the file name alone would cross the same line `restart_local_api`
+/// refuses to cross when the API is not ours.
+#[cfg(windows)]
+fn kill_stale_sidecar(resource_dir: Option<&Path>) {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::ProcessStatus::EnumProcesses;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject,
+        PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+    };
+
+    let Some((exe, _)) = find_sidecar(resource_dir) else {
         return;
     };
-    if let Some(mut child) = guard.take() {
-        let _ = child.kill();
-        let _ = child.wait();
+    let target = normalize_path(&exe.to_string_lossy());
+    let own_pid = std::process::id();
+
+    unsafe {
+        let mut pids = [0_u32; 4096];
+        let mut needed = 0_u32;
+        if EnumProcesses(
+            pids.as_mut_ptr(),
+            std::mem::size_of_val(&pids) as u32,
+            &mut needed,
+        )
+        .is_err()
+        {
+            return;
+        }
+        let found = (needed as usize / std::mem::size_of::<u32>()).min(pids.len());
+
+        for &pid in &pids[..found] {
+            if pid == 0 || pid == own_pid {
+                continue;
+            }
+            // Both rights at once: a process we may look at but not terminate is
+            // one we would skip anyway.
+            let Ok(handle) = OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+                false,
+                pid,
+            ) else {
+                continue;
+            };
+
+            let mut buf = [0_u16; 1024];
+            let mut len = buf.len() as u32;
+            let path = QueryFullProcessImageNameW(
+                handle,
+                PROCESS_NAME_WIN32,
+                PWSTR(buf.as_mut_ptr()),
+                &mut len,
+            )
+            .is_ok()
+            .then(|| String::from_utf16_lossy(&buf[..len as usize]));
+
+            if path.as_deref().is_some_and(|p| normalize_path(p) == target) {
+                let _ = TerminateProcess(handle, 0);
+                // Whoever called us is about to overwrite the files this process
+                // holds open, so waiting for it to actually be gone is the point.
+                let _ = WaitForSingleObject(handle, 5_000);
+            }
+
+            let _ = CloseHandle(handle);
+        }
     }
+}
+
+#[cfg(not(windows))]
+fn kill_stale_sidecar(_resource_dir: Option<&Path>) {}
+
+/// Compare Windows paths the way `tray_promote` does: separators unified, case
+/// folded. Same reason — two OS calls can hand back the same file with different
+/// spelling.
+#[cfg(windows)]
+fn normalize_path(path: &str) -> String {
+    path.replace('/', "\\").to_lowercase()
 }
 
 fn spawn_local_api(resource_dir: Option<&Path>) -> Result<(), String> {

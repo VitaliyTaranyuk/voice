@@ -16,7 +16,7 @@ mod wav;
 use commands::{
     api_key_status, cancel_dictation, check_api_health, clear_api_key, copy_last_history, copy_text,
     get_runtime_info, get_session_status, list_history, ping, set_api_key, start_dictation,
-    stop_dictation,
+    stop_dictation, stop_local_api,
 };
 use history::HistoryStore;
 use pipeline::PipelineState;
@@ -109,7 +109,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .manage(PipelineState::new(history))
         .setup(|app| {
             let show_i = MenuItem::with_id(app, "show", "Show Voice", true, None::<&str>)?;
@@ -205,13 +204,15 @@ pub fn run() {
             check_api_health,
             api_key_status,
             set_api_key,
-            clear_api_key
+            clear_api_key,
+            stop_local_api
         ])
         .build(tauri::generate_context!())
         .expect("error while building Voice")
-        .run(|_app, event| {
+        .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
-                api_boot::shutdown_local_api();
+                let resource_dir = app.path().resource_dir().ok();
+                api_boot::shutdown_local_api(resource_dir.as_deref());
             }
         });
 }

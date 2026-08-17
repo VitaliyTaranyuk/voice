@@ -18,7 +18,6 @@
     "core:window:allow-set-size",
     "core:window:allow-current-monitor",
     "opener:default",
-    "updater:default",
-    "process:default"
+    "updater:default"
   ]
 }
