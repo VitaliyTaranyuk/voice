@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Voice",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "com.voice.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -78,10 +78,22 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMzQThDODY2NDc3RDM2N0MKUldSOE5uMUhac2lvTXdqdldhc05pVUNLT3N2TUg0V3RXTmJuMFNqanhXc2xaU0N6QVo5SVBmelUK",
+      "endpoints": [
+        "https://github.com/VitaliyTaranyuk/voice/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
     "resources": ["resources/voice-api/**/*"],
+    "createUpdaterArtifacts": true,
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"

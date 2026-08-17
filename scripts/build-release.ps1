@@ -5,12 +5,31 @@
 # process at startup. A key written into the bundle would be readable in plain text
 # by everyone who receives the file.
 #
-# Prerequisites: Node/pnpm, Rust, uv.
+# Prerequisites: Node/pnpm, Rust, uv, and the updater signing key.
+#
+# The signing key is required, not optional: with createUpdaterArtifacts enabled
+# an unsigned build produces artifacts no installed app will accept, and the
+# failure would only surface later, on a user's machine. So it is checked first.
 #
 # Usage:
+#   $env:TAURI_SIGNING_PRIVATE_KEY = "$HOME\.tauri\voice-updater.key"
 #   pwsh scripts/build-release.ps1
 #
-# Output: dist/voice-release/Voice_*-setup.exe  (also copies from target/release/bundle/nsis)
+# The password is read from <key>.pass when the env var is unset, because Windows
+# cannot hold an empty environment variable at all: both `$env:X = ''` and
+# SetEnvironmentVariable(..., '') leave the variable non-existent (measured). An
+# empty-password key would therefore always drop the build into an interactive
+# prompt, and in CI or a background shell that is an indefinite hang, not an
+# error. So the key carries a real password and the password lives in a file
+# next to it.
+#
+# Be honest about what that buys: a password stored beside the key it unlocks
+# adds no security over an unencrypted key — whoever can read one can read both.
+# The protection here is filesystem access, nothing more. Its purpose is making
+# builds non-interactive, not making the key safer.
+#
+# Output: dist/voice-release/ — Voice_*-setup.exe, Voice_*-setup.nsis.zip,
+#         its .sig, and latest.json (the update manifest).
 
 $ErrorActionPreference = "Stop"
 
@@ -20,6 +39,36 @@ $sidecarScript = Join-Path $PSScriptRoot "build-api-sidecar.ps1"
 $tauriDir = Join-Path $root "apps\desktop\src-tauri"
 $resourceApi = Join-Path $tauriDir "resources\voice-api"
 $nsisDir = Join-Path $tauriDir "target\release\bundle\nsis"
+$repo = "VitaliyTaranyuk/voice"
+
+# Fail before spending ten minutes on a build whose artifacts would be useless.
+if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+  throw @"
+TAURI_SIGNING_PRIVATE_KEY is not set — the build would produce unsigned updater
+artifacts that installed apps reject.
+
+  `$env:TAURI_SIGNING_PRIVATE_KEY = "`$HOME\.tauri\voice-updater.key"
+  `$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+
+The key must be the same one whose public half sits in tauri.conf.json. Lose it
+and existing installs can never be updated again — back it up.
+"@
+}
+if ([string]::IsNullOrEmpty($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+  $passFile = "$($env:TAURI_SIGNING_PRIVATE_KEY).pass"
+  if (-not (Test-Path $passFile)) {
+    throw @"
+No signing password: TAURI_SIGNING_PRIVATE_KEY_PASSWORD is unset and $passFile
+does not exist. Without it the CLI drops into an interactive prompt and the
+build hangs instead of failing.
+"@
+  }
+  $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content $passFile -Raw).Trim()
+  if ([string]::IsNullOrEmpty($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+    throw "$passFile is empty — an empty password cannot be passed through the environment on Windows"
+  }
+  Write-Host "Signing password read from $passFile"
+}
 
 function Write-RuntimeEnv([string]$Dir) {
   if (-not (Test-Path $Dir)) {
@@ -55,24 +104,73 @@ pnpm install
 pnpm --filter @voice/contracts --filter @voice/domain-types --filter @voice/sdk build
 pnpm --filter @voice/desktop exec tauri build --bundles nsis
 
-$setupFiles = @(Get-ChildItem -Path $nsisDir -Filter "*-setup.exe" -ErrorAction SilentlyContinue)
-if ($setupFiles.Count -eq 0) {
-  throw "No *-setup.exe in $nsisDir — tauri NSIS build failed"
+# Version drives artifact selection: the bundle directory accumulates installers
+# from previous builds, and picking "the first *-setup.exe" would happily publish
+# a stale one under the new version's manifest.
+$conf = Get-Content (Join-Path $tauriDir "tauri.conf.json") -Raw | ConvertFrom-Json
+$version = $conf.version
+
+$setup = @(Get-ChildItem -Path $nsisDir -Filter "*_${version}_*-setup.exe" -ErrorAction SilentlyContinue)[0]
+if (-not $setup) {
+  throw "No *_${version}_*-setup.exe in $nsisDir — tauri NSIS build failed"
 }
 
-Write-Host "==> 3/3 copy installer to dist/voice-release"
+# Tauri v2 signs the installer itself; there is no separate .nsis.zip (the docs
+# still describe the older shape). So one artifact serves both the first install
+# and the update, and the updater checks it against this .sig.
+$sig = "$($setup.FullName).sig"
+if (-not (Test-Path $sig)) {
+  throw "Missing signature $sig — createUpdaterArtifacts is off, or the key was not applied"
+}
+
+Write-Host "==> 3/3 collect artifacts + update manifest → dist/voice-release"
 if (Test-Path $releaseDir) {
   Remove-Item -Recurse -Force $releaseDir
 }
 New-Item -ItemType Directory -Path $releaseDir | Out-Null
-foreach ($f in $setupFiles) {
-  Copy-Item $f.FullName (Join-Path $releaseDir $f.Name)
+Copy-Item $setup.FullName (Join-Path $releaseDir $setup.Name)
+Copy-Item $sig (Join-Path $releaseDir "$($setup.Name).sig")
+
+# latest.json is not produced by `tauri build` — it has to be assembled here.
+# Version comes from tauri.conf.json, NOT from a git tag: the updater compares
+# plain semver against the running app, and a `v` prefix would never match.
+$manifest = [ordered]@{
+  version   = $version
+  notes     = "См. https://github.com/$repo/releases/tag/v$version"
+  pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+  platforms = [ordered]@{
+    "windows-x86_64" = [ordered]@{
+      signature = (Get-Content $sig -Raw).Trim()
+      url       = "https://github.com/$repo/releases/download/v$version/$($setup.Name)"
+    }
+  }
 }
+$manifestPath = Join-Path $releaseDir "latest.json"
+# UTF-8 WITHOUT a BOM, deliberately: `Set-Content -Encoding UTF8` on Windows
+# PowerShell 5.1 prepends one, a BOM is not valid JSON per RFC 8259, and the
+# updater's parser rejects it — the manifest would be unreadable while looking
+# perfectly fine in an editor.
+[System.IO.File]::WriteAllText(
+  $manifestPath,
+  ($manifest | ConvertTo-Json -Depth 5),
+  (New-Object System.Text.UTF8Encoding($false))
+)
+$firstBytes = [System.IO.File]::ReadAllBytes($manifestPath)[0..2]
+if ($firstBytes[0] -eq 0xEF -and $firstBytes[1] -eq 0xBB -and $firstBytes[2] -eq 0xBF) {
+  throw "latest.json was written with a BOM — the updater cannot parse it"
+}
+Write-Host "Wrote $manifestPath (version $version, no BOM)"
 
 Write-Host ""
-Write-Host "OK installer(s):"
-Get-ChildItem $releaseDir -Filter "*-setup.exe" | ForEach-Object { Write-Host "  $($_.FullName)" }
+Write-Host "OK artifacts:"
+Get-ChildItem $releaseDir | ForEach-Object { Write-Host "  $($_.Name)" }
 Write-Host ""
-Write-Host "Send the *-setup.exe to friends. They: Run → choose folder → Install."
+Write-Host "Publish ALL of them to the release, or updates break:"
+Write-Host "  gh release create v$version --repo $repo --notes-file <notes> (Get-ChildItem '$releaseDir' | % FullName)"
+Write-Host ""
+Write-Host "  *-setup.exe      — first install AND what installed apps download to update"
+Write-Host "  *-setup.exe.sig  — signature checked against the pubkey in tauri.conf.json"
+Write-Host "  latest.json      — the manifest the app polls via releases/latest/download"
+Write-Host ""
 Write-Host "Dictation works right away; refinement needs their own DeepSeek key in Settings."
-Write-Host "Do not commit runtime.env or the setup exe to git."
+Write-Host "Do not commit runtime.env or any build artifact to git."

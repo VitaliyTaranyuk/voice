@@ -178,6 +178,32 @@ body {
   border-color: rgba(196, 106, 58, 0.22);
 }
 
+/* Обновление — сообщение, а не проблема: спокойный зелёный, чтобы баннер не
+   читался как предупреждение об офлайн-API рядом. */
+.banner.update {
+  justify-content: space-between;
+  background: rgba(47, 125, 92, 0.1);
+  color: #2f7d5c;
+  border-color: rgba(47, 125, 92, 0.22);
+}
+
+.btn-inline {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid rgba(47, 125, 92, 0.3);
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--ease);
+}
+
+.btn-inline:hover {
+  background: rgba(47, 125, 92, 0.14);
+}
+
 .panel {
   display: flex;
   flex-direction: column;
