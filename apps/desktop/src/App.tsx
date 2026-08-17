@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { useSessionStore } from './store/session';
+import { useUpdate } from './useUpdate';
 import type { HistoryItem, RuntimeInfo, SessionSnapshot } from './types';
 
 const WIN_WIDTH = 360;
@@ -152,6 +153,7 @@ export default function App() {
   } = useSessionStore();
   const [copied, setCopied] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
+  const update = useUpdate();
 
   function applySession(snap: SessionSnapshot) {
     setSession(snap);
@@ -377,6 +379,37 @@ export default function App() {
         <div className="banner warn" role="status">
           <IconAlert size={14} />
           <span>API offline — start local API to dictate</span>
+        </div>
+      ) : null}
+
+      {update.stage.kind === 'available' ? (
+        <div className="banner update" role="status">
+          <span>Version {update.stage.version} is available</span>
+          <button type="button" className="btn-inline" onClick={() => void update.install()}>
+            Update
+          </button>
+        </div>
+      ) : null}
+
+      {update.stage.kind === 'downloading' ? (
+        <div className="banner update" role="status">
+          <span>
+            Downloading {update.stage.version}
+            {update.stage.percent === null ? '…' : ` — ${update.stage.percent}%`}
+          </span>
+        </div>
+      ) : null}
+
+      {update.stage.kind === 'installed' ? (
+        <div className="banner update" role="status">
+          <span>Installed {update.stage.version} — restarting</span>
+        </div>
+      ) : null}
+
+      {update.stage.kind === 'failed' ? (
+        <div className="banner warn" role="alert">
+          <IconAlert size={14} />
+          <span>Update failed — {update.stage.message}</span>
         </div>
       ) : null}
 
