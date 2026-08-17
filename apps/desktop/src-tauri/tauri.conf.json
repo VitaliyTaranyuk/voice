@@ -80,7 +80,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJEOEVBRDVGMzlCRTFBNUYKUldSZkdyNDVYNjJPdmZzbmxGRHdmT1BuaVJKZ3NIQXB4TFB4MFRZT3p2T0MvaUtocHkxb3pybmkK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMzQThDODY2NDc3RDM2N0MKUldSOE5uMUhac2lvTXdqdldhc05pVUNLT3N2TUg0V3RXTmJuMFNqanhXc2xaU0N6QVo5SVBmelUK",
       "endpoints": [
         "https://github.com/VitaliyTaranyuk/voice/releases/latest/download/latest.json"
       ],

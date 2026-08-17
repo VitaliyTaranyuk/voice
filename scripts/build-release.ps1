@@ -13,8 +13,20 @@
 #
 # Usage:
 #   $env:TAURI_SIGNING_PRIVATE_KEY = "$HOME\.tauri\voice-updater.key"
-#   $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
 #   pwsh scripts/build-release.ps1
+#
+# The password is read from <key>.pass when the env var is unset, because Windows
+# cannot hold an empty environment variable at all: both `$env:X = ''` and
+# SetEnvironmentVariable(..., '') leave the variable non-existent (measured). An
+# empty-password key would therefore always drop the build into an interactive
+# prompt, and in CI or a background shell that is an indefinite hang, not an
+# error. So the key carries a real password and the password lives in a file
+# next to it.
+#
+# Be honest about what that buys: a password stored beside the key it unlocks
+# adds no security over an unencrypted key — whoever can read one can read both.
+# The protection here is filesystem access, nothing more. Its purpose is making
+# builds non-interactive, not making the key safer.
 #
 # Output: dist/voice-release/ — Voice_*-setup.exe, Voice_*-setup.nsis.zip,
 #         its .sig, and latest.json (the update manifest).
@@ -42,9 +54,20 @@ The key must be the same one whose public half sits in tauri.conf.json. Lose it
 and existing installs can never be updated again — back it up.
 "@
 }
-if ($null -eq $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
-  # Empty is a valid password; unset is not — the CLI would prompt and hang.
-  $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+if ([string]::IsNullOrEmpty($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+  $passFile = "$($env:TAURI_SIGNING_PRIVATE_KEY).pass"
+  if (-not (Test-Path $passFile)) {
+    throw @"
+No signing password: TAURI_SIGNING_PRIVATE_KEY_PASSWORD is unset and $passFile
+does not exist. Without it the CLI drops into an interactive prompt and the
+build hangs instead of failing.
+"@
+  }
+  $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content $passFile -Raw).Trim()
+  if ([string]::IsNullOrEmpty($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+    throw "$passFile is empty — an empty password cannot be passed through the environment on Windows"
+  }
+  Write-Host "Signing password read from $passFile"
 }
 
 function Write-RuntimeEnv([string]$Dir) {
@@ -81,9 +104,23 @@ pnpm install
 pnpm --filter @voice/contracts --filter @voice/domain-types --filter @voice/sdk build
 pnpm --filter @voice/desktop exec tauri build --bundles nsis
 
-$setupFiles = @(Get-ChildItem -Path $nsisDir -Filter "*-setup.exe" -ErrorAction SilentlyContinue)
-if ($setupFiles.Count -eq 0) {
-  throw "No *-setup.exe in $nsisDir — tauri NSIS build failed"
+# Version drives artifact selection: the bundle directory accumulates installers
+# from previous builds, and picking "the first *-setup.exe" would happily publish
+# a stale one under the new version's manifest.
+$conf = Get-Content (Join-Path $tauriDir "tauri.conf.json") -Raw | ConvertFrom-Json
+$version = $conf.version
+
+$setup = @(Get-ChildItem -Path $nsisDir -Filter "*_${version}_*-setup.exe" -ErrorAction SilentlyContinue)[0]
+if (-not $setup) {
+  throw "No *_${version}_*-setup.exe in $nsisDir — tauri NSIS build failed"
+}
+
+# Tauri v2 signs the installer itself; there is no separate .nsis.zip (the docs
+# still describe the older shape). So one artifact serves both the first install
+# and the update, and the updater checks it against this .sig.
+$sig = "$($setup.FullName).sig"
+if (-not (Test-Path $sig)) {
+  throw "Missing signature $sig — createUpdaterArtifacts is off, or the key was not applied"
 }
 
 Write-Host "==> 3/3 collect artifacts + update manifest → dist/voice-release"
@@ -91,28 +128,12 @@ if (Test-Path $releaseDir) {
   Remove-Item -Recurse -Force $releaseDir
 }
 New-Item -ItemType Directory -Path $releaseDir | Out-Null
-foreach ($f in $setupFiles) {
-  Copy-Item $f.FullName (Join-Path $releaseDir $f.Name)
-}
-
-# Updater artifacts: the app downloads the .nsis.zip, not the setup.exe, and
-# verifies it against the .sig. Both must reach the release.
-$zip = @(Get-ChildItem -Path $nsisDir -Filter "*-setup.nsis.zip" -ErrorAction SilentlyContinue)[0]
-if (-not $zip) {
-  throw "No *-setup.nsis.zip in $nsisDir — createUpdaterArtifacts is off, or the build did not sign"
-}
-$sig = Join-Path $nsisDir "$($zip.Name).sig"
-if (-not (Test-Path $sig)) {
-  throw "Missing signature $sig — TAURI_SIGNING_PRIVATE_KEY was not applied"
-}
-Copy-Item $zip.FullName (Join-Path $releaseDir $zip.Name)
-Copy-Item $sig (Join-Path $releaseDir "$($zip.Name).sig")
+Copy-Item $setup.FullName (Join-Path $releaseDir $setup.Name)
+Copy-Item $sig (Join-Path $releaseDir "$($setup.Name).sig")
 
 # latest.json is not produced by `tauri build` — it has to be assembled here.
 # Version comes from tauri.conf.json, NOT from a git tag: the updater compares
 # plain semver against the running app, and a `v` prefix would never match.
-$conf = Get-Content (Join-Path $tauriDir "tauri.conf.json") -Raw | ConvertFrom-Json
-$version = $conf.version
 $manifest = [ordered]@{
   version   = $version
   notes     = "См. https://github.com/$repo/releases/tag/v$version"
@@ -120,13 +141,25 @@ $manifest = [ordered]@{
   platforms = [ordered]@{
     "windows-x86_64" = [ordered]@{
       signature = (Get-Content $sig -Raw).Trim()
-      url       = "https://github.com/$repo/releases/download/v$version/$($zip.Name)"
+      url       = "https://github.com/$repo/releases/download/v$version/$($setup.Name)"
     }
   }
 }
 $manifestPath = Join-Path $releaseDir "latest.json"
-$manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $manifestPath -Encoding UTF8
-Write-Host "Wrote $manifestPath (version $version)"
+# UTF-8 WITHOUT a BOM, deliberately: `Set-Content -Encoding UTF8` on Windows
+# PowerShell 5.1 prepends one, a BOM is not valid JSON per RFC 8259, and the
+# updater's parser rejects it — the manifest would be unreadable while looking
+# perfectly fine in an editor.
+[System.IO.File]::WriteAllText(
+  $manifestPath,
+  ($manifest | ConvertTo-Json -Depth 5),
+  (New-Object System.Text.UTF8Encoding($false))
+)
+$firstBytes = [System.IO.File]::ReadAllBytes($manifestPath)[0..2]
+if ($firstBytes[0] -eq 0xEF -and $firstBytes[1] -eq 0xBB -and $firstBytes[2] -eq 0xBF) {
+  throw "latest.json was written with a BOM — the updater cannot parse it"
+}
+Write-Host "Wrote $manifestPath (version $version, no BOM)"
 
 Write-Host ""
 Write-Host "OK artifacts:"
@@ -135,10 +168,9 @@ Write-Host ""
 Write-Host "Publish ALL of them to the release, or updates break:"
 Write-Host "  gh release create v$version --repo $repo --notes-file <notes> (Get-ChildItem '$releaseDir' | % FullName)"
 Write-Host ""
-Write-Host "  *-setup.exe  — first install, this is what the landing page links to"
-Write-Host "  *.nsis.zip   — what installed apps download to update"
-Write-Host "  *.sig        — signature checked against the pubkey in tauri.conf.json"
-Write-Host "  latest.json  — the manifest the app polls via releases/latest/download"
+Write-Host "  *-setup.exe      — first install AND what installed apps download to update"
+Write-Host "  *-setup.exe.sig  — signature checked against the pubkey in tauri.conf.json"
+Write-Host "  latest.json      — the manifest the app polls via releases/latest/download"
 Write-Host ""
 Write-Host "Dictation works right away; refinement needs their own DeepSeek key in Settings."
 Write-Host "Do not commit runtime.env or any build artifact to git."
