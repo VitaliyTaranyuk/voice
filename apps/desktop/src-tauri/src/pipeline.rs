@@ -166,14 +166,6 @@ impl PipelineState {
 
             // Accidental chord / tap: skip ASR entirely.
             if stats.duration_ms < 300 {
-                // #region agent log
-                agent_dbg(
-                    "B",
-                    "pipeline.rs:stop_short",
-                    "cancelled_too_short",
-                    serde_json::json!({ "durationMs": stats.duration_ms, "peak": stats.peak_amplitude }),
-                );
-                // #endregion
                 guard.status = DictationStatus::Cancelled;
                 guard.last_audio = Some(stats.clone());
                 guard.recording_mode = None;
@@ -194,18 +186,6 @@ impl PipelineState {
 
             // Mic open with no real speech — don't call ASR (avoids Whisper hallucinations).
             if is_mostly_silence(&samples, stats.peak_amplitude) {
-                // #region agent log
-                agent_dbg(
-                    "B",
-                    "pipeline.rs:stop_silence",
-                    "cancelled_silence",
-                    serde_json::json!({
-                        "durationMs": stats.duration_ms,
-                        "peak": stats.peak_amplitude,
-                        "samples": samples.len()
-                    }),
-                );
-                // #endregion
                 guard.status = DictationStatus::Cancelled;
                 guard.last_audio = Some(stats.clone());
                 guard.recording_mode = None;
@@ -230,23 +210,6 @@ impl PipelineState {
                 .unwrap_or_else(|| Uuid::new_v4().to_string());
             let app_context = guard.app_context.clone();
             let input_target = guard.input_target.clone();
-            // #region agent log
-            agent_dbg(
-                "A",
-                "pipeline.rs:stop_asr_start",
-                "stop_ok_starting_asr",
-                serde_json::json!({
-                    "durationMs": stats.duration_ms,
-                    "peak": stats.peak_amplitude,
-                    "samples": samples.len(),
-                    "sampleRate": sample_rate,
-                    "hasTarget": input_target.is_some(),
-                    "canInsert": input_target.as_ref().map(|t| t.can_insert),
-                    "apiBase": std::env::var("VOICE_API_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8787".into()),
-                    "hasApiKey": std::env::var("VOICE_API_KEY").map(|k| !k.trim().is_empty()).unwrap_or(false)
-                }),
-            );
-            // #endregion
             guard.status = DictationStatus::Transcribing;
             guard.last_audio = Some(stats.clone());
             guard.message_override = None;
@@ -339,14 +302,6 @@ impl PipelineState {
                     DictationStatus::Cancelled
                 }
                 Err(err) => {
-                    // #region agent log
-                    agent_dbg(
-                        "A",
-                        "pipeline.rs:terminal_failed",
-                        "dictation_failed",
-                        serde_json::json!({ "error": err }),
-                    );
-                    // #endregion
                     guard.status = DictationStatus::Failed;
                     guard.message_override = Some(err);
                     guard.last_audio = Some(stats);
@@ -438,43 +393,14 @@ where
             .unwrap_or(false)
     };
     if samples.len() < (sample_rate as usize / 10) {
-        // #region agent log
-        agent_dbg(
-            "B",
-            "pipeline.rs:process_too_short",
-            "samples_below_min",
-            serde_json::json!({ "samples": samples.len(), "sampleRate": sample_rate }),
-        );
-        // #endregion
         return Err("Recording too short — hold the hotkey and speak".into());
     }
 
     let wav = encode_wav_pcm16(&samples, sample_rate).map_err(|e| e.to_string())?;
     let locale = "ru";
 
-    // #region agent log
-    agent_dbg(
-        "A",
-        "pipeline.rs:asr_request",
-        "calling_transcribe",
-        serde_json::json!({ "wavBytes": wav.len(), "locale": locale }),
-    );
-    // #endregion
     let asr = match api.transcribe(wav, locale).await {
         Ok(r) => {
-            // #region agent log
-            agent_dbg(
-                "A",
-                "pipeline.rs:asr_ok",
-                "transcribe_ok",
-                serde_json::json!({
-                    "provider": r.provider,
-                    "textLen": r.text.len(),
-                    "textPreview": truncate(&r.text, 40),
-                    "warnings": r.warnings
-                }),
-            );
-            // #endregion
             r
         }
         Err(e) => {
@@ -482,26 +408,10 @@ where
                 crate::cloud::CloudError::EmptyTranscript => NO_SPEECH_ERR.to_string(),
                 other => other.to_string(),
             };
-            // #region agent log
-            agent_dbg(
-                "A",
-                "pipeline.rs:asr_err",
-                "transcribe_failed",
-                serde_json::json!({ "error": mapped }),
-            );
-            // #endregion
             return Err(mapped);
         }
     };
     let Some(raw) = sanitize_transcript(&asr.text) else {
-        // #region agent log
-        agent_dbg(
-            "D",
-            "pipeline.rs:sanitize_empty",
-            "filler_or_empty_after_sanitize",
-            serde_json::json!({ "textPreview": truncate(&asr.text, 40) }),
-        );
-        // #endregion
         return Err(NO_SPEECH_ERR.into());
     };
     if !still_current() {
@@ -548,27 +458,11 @@ where
         let app_id = app_context.as_ref().map(|c| c.app_id.as_str());
         match history.insert(&session_id, final_text, Some(raw), app_id) {
             Ok(_) => {
-                // #region agent log
-                agent_dbg(
-                    "C",
-                    "pipeline.rs:history_ok",
-                    "history_inserted",
-                    serde_json::json!({ "textLen": final_text.len() }),
-                );
-                // #endregion
                 true
             }
             Err(err) => {
                 // EmptyText is impossible here after ASR guard; other DB errors should not block inject.
                 eprintln!("Voice: history insert failed: {err}");
-                // #region agent log
-                agent_dbg(
-                    "C",
-                    "pipeline.rs:history_err",
-                    "history_insert_failed",
-                    serde_json::json!({ "error": err.to_string() }),
-                );
-                // #endregion
                 false
             }
         }
@@ -579,32 +473,12 @@ where
             let can_insert = target.can_insert;
             let text = final_text.clone();
             let target = target.clone();
-            // #region agent log
-            agent_dbg(
-                "E",
-                "pipeline.rs:inject_start",
-                "injecting",
-                serde_json::json!({ "canInsert": can_insert, "textLen": text.len() }),
-            );
-            // #endregion
             // UIA / SendInput are blocking Win32 — keep them off the async runtime.
             let inject_result = tokio::task::spawn_blocking(move || inject_text(&text, &target))
                 .await
                 .map_err(|e| format!("inject join error: {e}"))?;
             if let Err(err) = inject_result {
-                let hist_ok = save_history(&final_text, &raw);
-                // #region agent log
-                agent_dbg(
-                    "E",
-                    "pipeline.rs:inject_err",
-                    "inject_failed",
-                    serde_json::json!({
-                        "error": err.to_string(),
-                        "canInsert": can_insert,
-                        "historySaved": hist_ok
-                    }),
-                );
-                // #endregion
+                let _ = save_history(&final_text, &raw);
                 if !can_insert {
                     return Err(format!(
                         "No active text field — saved to history: {}",
@@ -618,15 +492,7 @@ where
             }
         }
         None => {
-            let hist_ok = save_history(&final_text, &raw);
-            // #region agent log
-            agent_dbg(
-                "E",
-                "pipeline.rs:no_target",
-                "no_input_target",
-                serde_json::json!({ "historySaved": hist_ok }),
-            );
-            // #endregion
+            let _ = save_history(&final_text, &raw);
             return Err(format!(
                 "No capture target — saved to history: {}",
                 truncate(&final_text, 60)
@@ -813,30 +679,6 @@ fn is_real_short_word(s: &str) -> bool {
     matches!(s, "мама" | "ума" | "мы" | "emu" | "me" | "am")
 }
 
-// #region agent log
-fn agent_dbg(hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
-    use std::io::Write;
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let payload = serde_json::json!({
-        "sessionId": "eae7db",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": ts,
-    });
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(r"C:\Users\CyberPC\Desktop\Vibe\voice\debug-eae7db.log")
-    {
-        let _ = writeln!(f, "{payload}");
-    }
-}
-// #endregion
 
 /// Skip DeepSeek refine when `VOICE_SKIP_REFINE=1`. Default: refine on (quality path).
 fn skip_refine_enabled() -> bool {
